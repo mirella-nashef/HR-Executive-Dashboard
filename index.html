@@ -756,7 +756,7 @@
           <h3 class="section-heading">Punctuality &amp; hours</h3>
           <div class="chart-grid cols-2">
             <div class="card">
-              <div class="card-header"><div><div class="card-title">Late arrivals by department</div><div class="card-subtitle">Clock-in after 09:00 (08:00 for Ramadan shift)</div></div></div>
+              <div class="card-header"><div><div class="card-title">Late arrivals by department</div><div class="card-subtitle">Clock-in after 09:00 (start window is 07:30–09:00 for both Standard and Ramadan shifts)</div></div></div>
               <div class="chart-wrap"><canvas id="chartLateByDept"></canvas></div>
             </div>
             <div class="card">
@@ -1039,7 +1039,10 @@ function normalizeAttendanceRow(r) {
 
   const isRamadan = /ramadan/i.test(shift);
   const targetMin = isRamadan ? 7*60 : 9*60;
-  const lateThreshold = isRamadan ? 8*60 : 9*60;
+  // Standard window is 7:30–9:00 start (4 valid start times). Ramadan keeps the same
+  // start flexibility, only the day length shrinks to 7h. So "late" = clock-in after 09:00
+  // for both shift types.
+  const lateThreshold = 9*60;
 
   const isWeeklyOff = /weekly off/i.test(status) || /weekly off/i.test(detail);
   const isHoliday = /holiday/i.test(status) || /holiday/i.test(detail);
@@ -1264,7 +1267,7 @@ function renderExec(rows) {
   kpis.push(kpiCard({label:'Total Headcount', value: fmtNum(headcount), sub: 'unique in range'}));
   kpis.push(kpiCard({label:'Avg Attendance', value: fmtPct(attendancePct), sub: `${presentDays} / ${scheduled.length} scheduled`, tone: attendancePct>=95?'success': attendancePct>=85?'':'warning'}));
   kpis.push(kpiCard({label:'Avg Working Hours', value: fmtHrs(avgWorkMin), sub: 'across present days'}));
-  kpis.push(kpiCard({label:'Late Arrivals', value: fmtNum(lateCount), sub: 'after threshold', tone: lateCount>0?'warning':''}));
+  kpis.push(kpiCard({label:'Late Arrivals', value: fmtNum(lateCount), sub: 'clock-in after 09:00', tone: lateCount>0?'warning':''}));
   kpis.push(kpiCard({label:'< 9 Hr Days', value: fmtNum(under9Days), sub: 'below target', tone: under9Days>0?'warning':''}));
   kpis.push(kpiCard({label:'Single Punch', value: fmtNum(singlePunch), sub: 'absent / incomplete', tone: singlePunch>0?'warning':''}));
   kpis.push(kpiCard({label:'Remote Days', value: fmtNum(remoteDays), sub: 'WFH + remote off-site'}));
@@ -1449,7 +1452,7 @@ function renderAttendance(rows) {
   document.getElementById('attendanceKpis').innerHTML = [
     kpiCard({label:'Attendance %', value: fmtPct(att), tone: att>=95?'success':att>=85?'':'warning'}),
     kpiCard({label:'Avg Working Hours', value: fmtHrs(avgHrs)}),
-    kpiCard({label:'Late Arrivals', value: fmtNum(lateDays), sub:'after 09:00 / 08:00'}),
+    kpiCard({label:'Late Arrivals', value: fmtNum(lateDays), sub:'clock-in after 09:00'}),
     kpiCard({label:'< 9 Hr Days', value: fmtNum(under9), tone: under9>0?'warning':''}),
     kpiCard({label:'Remote Days', value: fmtNum(remote)}),
     kpiCard({label:'Off-Site Days', value: fmtNum(offsite)}),
@@ -1871,4 +1874,3 @@ window.addEventListener('drop', (e) => {
 
 </body>
 </html>
-
