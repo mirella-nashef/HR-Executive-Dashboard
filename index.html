@@ -6,6 +6,7 @@
 <title>RED HR Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root {
     --bg: #f8fafc;
@@ -521,6 +522,34 @@
     cursor: pointer;
     font-size: 16px;
   }
+
+  /* Print */
+  .print-header { display: none; }
+  @media print {
+    @page { size: A4 landscape; margin: 10mm; }
+    body { background: #fff !important; }
+    .sidebar, .topbar, .filter-bar, .menu-toggle, .upload-cluster, #emptyState { display: none !important; }
+    .content { padding: 0 !important; }
+    .main { width: 100% !important; }
+    .app-shell { display: block !important; }
+    .card, .kpi { box-shadow: none !important; border-color: #d1d5db !important; break-inside: avoid; page-break-inside: avoid; }
+    .section-block { break-inside: avoid-page; margin-bottom: 16px !important; }
+    .tab-content { display: none !important; }
+    .tab-content.active { display: block !important; }
+    .table-wrap.scroll { max-height: none !important; overflow: visible !important; }
+    .kpi-grid { gap: 8px !important; }
+    .chart-wrap { height: 240px !important; }
+    .chart-wrap.hero { height: 320px !important; }
+    .chart-wrap.tall { height: 300px !important; }
+    .print-header {
+      display: block !important;
+      padding: 0 0 12px;
+      margin-bottom: 16px;
+      border-bottom: 2px solid #1f2937;
+    }
+    .print-header h1 { font-size: 18px; margin: 0; color: #0f172a; }
+    .print-header .meta { font-size: 11px; color: #475569; margin-top: 4px; }
+  }
 </style>
 </head>
 <body>
@@ -562,9 +591,10 @@
       </div>
       <div class="upload-cluster">
         <div id="loadedFiles"></div>
-        <button class="btn" id="uploadBtn">Upload CSV</button>
+        <button class="btn" id="uploadBtn">Upload file</button>
+        <button class="btn ghost hidden" id="printBtn">Print / PDF</button>
         <button class="btn ghost hidden" id="clearBtn">Clear data</button>
-        <input type="file" id="fileInput" accept=".csv" multiple style="display:none" />
+        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" multiple style="display:none" />
       </div>
     </div>
 
@@ -590,13 +620,19 @@
     <!-- Content -->
     <div class="content">
 
+      <!-- Print-only header -->
+      <div class="print-header">
+        <h1 id="printTitle">RED HR Dashboard</h1>
+        <div class="meta" id="printMeta"></div>
+      </div>
+
       <!-- Empty state -->
       <div id="emptyState" class="empty-state">
         <h2>Upload your HR data to begin</h2>
-        <p>Drop the HRBP Daily Attendance Report CSV to populate the dashboard. Optionally add an Employee Master CSV (gender, nationality, joining date) for diversity &amp; tenure analysis.</p>
+        <p>Drop the HRBP Daily Attendance Report and the Employee Master report (CSV or XLSX) to populate the dashboard. The Attendance file drives the Executive / Attendance / Absence / Behavior tabs; the Master file drives the Workforce tab.</p>
         <div class="drop-zone" id="dropZone">
           <div class="drop-zone-icon">⬆</div>
-          <div><strong>Click to upload</strong> or drag &amp; drop CSV files here</div>
+          <div><strong>Click to upload</strong> or drag &amp; drop CSV / XLSX files here</div>
           <div class="hint">Everything is parsed locally in your browser — nothing is uploaded.</div>
         </div>
       </div>
@@ -680,66 +716,113 @@
 
       <!-- Section 2: Workforce -->
       <section id="tab-workforce" class="tab-content">
-        <div class="section-block">
-          <h3 class="section-heading">Composition</h3>
-          <div class="kpi-grid" id="workforceKpis"></div>
+
+        <!-- Empty state when master not loaded -->
+        <div id="workforceEmpty" class="empty-state hidden" style="margin: 0 0 24px;">
+          <h2>Upload Employee Master report</h2>
+          <p>The Workforce section is driven by the Employee Master file (CSV or XLSX) with columns: Employee Id, Full Name, Date Of Joining, Current Designation, Current Department/Function, Contribution Level, Division Name, Direct Manager Name, Date Of Birth, Gender, Nationality.</p>
+          <div style="font-size: 12px; color: var(--text-subtle);">Once uploaded, this tab will show headcount trends, joiners, diversity, leadership representation, and org structure metrics.</div>
         </div>
 
-        <div class="section-block">
-          <div class="chart-grid cols-2">
-            <div class="card">
-              <div class="card-header"><div><div class="card-title">Headcount by department</div></div></div>
-              <div class="chart-wrap"><canvas id="chartWfDept"></canvas></div>
-            </div>
-            <div class="card">
-              <div class="card-header"><div><div class="card-title">Headcount by designation</div><div class="card-subtitle">Top 15 roles</div></div></div>
-              <div class="chart-wrap tall"><canvas id="chartWfDesignation"></canvas></div>
+        <div id="workforceContent">
+          <div class="section-block">
+            <h3 class="section-heading">Composition</h3>
+            <div class="kpi-grid" id="workforceKpis"></div>
+          </div>
+
+          <div class="section-block">
+            <h3 class="section-heading">Headcount trends</h3>
+            <div class="chart-grid cols-2">
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Total headcount by month</div><div class="card-subtitle">Cumulative active employees based on joining date</div></div></div>
+                <div class="chart-wrap"><canvas id="chartHcByMonth"></canvas></div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">New joiners by month</div></div></div>
+                <div class="chart-wrap"><canvas id="chartJoinersByMonth"></canvas></div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="section-block">
-          <div class="chart-grid cols-3">
-            <div class="card">
-              <div class="card-header"><div><div class="card-title">Shift type</div></div></div>
-              <div class="chart-wrap"><canvas id="chartWfShift"></canvas></div>
-            </div>
-            <div class="card" id="wfGenderCard">
-              <div class="card-header"><div><div class="card-title">Gender mix</div><div class="card-subtitle">From employee master CSV</div></div></div>
-              <div class="chart-wrap"><canvas id="chartWfGender"></canvas></div>
-            </div>
-            <div class="card" id="wfNationalityCard">
-              <div class="card-header"><div><div class="card-title">Nationality mix</div><div class="card-subtitle">Top 10 nationalities</div></div></div>
-              <div class="chart-wrap"><canvas id="chartWfNationality"></canvas></div>
+          <div class="section-block">
+            <h3 class="section-heading">Distribution</h3>
+            <div class="chart-grid cols-2">
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Headcount by department</div></div></div>
+                <div class="chart-wrap"><canvas id="chartWfDept"></canvas></div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Headcount by contribution level</div><div class="card-subtitle">Standard vs Roster employees</div></div></div>
+                <div class="chart-wrap"><canvas id="chartHcByLevel"></canvas></div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Headcount by designation</div><div class="card-subtitle">Top 15 roles</div></div></div>
+                <div class="chart-wrap tall"><canvas id="chartWfDesignation"></canvas></div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Headcount by nationality</div><div class="card-subtitle">Top 10 nationalities</div></div></div>
+                <div class="chart-wrap tall"><canvas id="chartWfNationality"></canvas></div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="section-block">
-          <div class="chart-grid cols-2">
-            <div class="card" id="wfTenureCard">
-              <div class="card-header"><div><div class="card-title">Tenure distribution</div><div class="card-subtitle">Years since date of joining</div></div></div>
+          <div class="section-block">
+            <h3 class="section-heading">Diversity</h3>
+            <div class="chart-grid cols-2">
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Gender mix</div></div></div>
+                <div class="chart-wrap"><canvas id="chartWfGender"></canvas></div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Leadership diversity</div><div class="card-subtitle">Directors, VPs, Heads, Chiefs, Senior Managers</div></div></div>
+                <div class="chart-wrap"><canvas id="chartLeadership"></canvas></div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Gender ratio by department</div></div></div>
+                <div class="chart-wrap tall"><canvas id="chartGenderByDept"></canvas></div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Female representation trend</div><div class="card-subtitle">% female of active workforce over time</div></div></div>
+                <div class="chart-wrap"><canvas id="chartFemaleTrend"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h3 class="section-heading">Tenure</h3>
+            <div class="card">
+              <div class="card-header"><div><div class="card-title">Tenure distribution</div><div class="card-subtitle">Years between date of joining and selected end date</div></div></div>
               <div class="chart-wrap"><canvas id="chartWfTenure"></canvas></div>
             </div>
-            <div class="card" id="wfJoinersCard">
-              <div class="card-header"><div><div class="card-title">Joiners by year</div><div class="card-subtitle">Hire volume per calendar year</div></div></div>
-              <div class="chart-wrap"><canvas id="chartWfJoiners"></canvas></div>
-            </div>
           </div>
-        </div>
 
-        <div class="section-block">
-          <h3 class="section-heading">Org structure</h3>
-          <div class="card flush">
-            <div class="card-head-block">
-              <div class="card-title">Span of control</div>
-              <div class="card-subtitle">Direct reports per manager (observed in attendance data)</div>
-            </div>
-            <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px;">
-              <table class="data" id="spanOfControlTable">
-                <thead><tr><th>Manager</th><th class="num">Direct Reports</th><th>Departments</th></tr></thead>
-                <tbody></tbody>
-              </table>
+          <div class="section-block">
+            <h3 class="section-heading">Org health</h3>
+            <div class="chart-grid cols-2">
+              <div class="card flush">
+                <div class="card-head-block">
+                  <div class="card-title">Span of control</div>
+                  <div class="card-subtitle">Direct reports per manager</div>
+                </div>
+                <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 420px;">
+                  <table class="data" id="spanOfControlTable">
+                    <thead><tr><th>Manager</th><th class="num">Reports</th><th>Departments</th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Structure metrics</div></div></div>
+                <div id="orgMetrics"></div>
+                <div style="font-size:12px; color:var(--text-muted); margin-top:18px; padding-top:14px; border-top:1px solid var(--border); line-height: 1.5;">
+                  <strong style="color:var(--text); font-weight:600;">Leavers, Turnover &amp; Exit Type</strong><br/>
+                  Not derivable from the Employee Master alone — requires a separate leavers file (exit date + reason).
+                </div>
+                <div style="font-size:12px; color:var(--text-muted); margin-top:12px; line-height: 1.5;">
+                  <strong style="color:var(--text); font-weight:600;">Open positions vs Filled</strong><br/>
+                  Requires a recruitment / vacancies report (job openings with status).
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -975,22 +1058,32 @@ const State = {
 
 /* ---------- Utilities ---------- */
 function parseDate(s) {
-  if (!s) return null;
-  const m = String(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (s === null || s === undefined || s === '') return null;
+  if (s instanceof Date) return isNaN(s) ? null : s;
+  if (typeof s === 'number') {
+    // Excel serial date (days since 1899-12-30)
+    const d = new Date(Math.round((s - 25569) * 86400 * 1000));
+    return isNaN(d) ? null : d;
+  }
+  const str = String(s).trim();
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) { const d = new Date(+m[3], +m[2]-1, +m[1]); return isNaN(d)?null:d; }
-  const m2 = String(s).match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  const m2 = str.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
   if (m2) { const d = new Date(+m2[3], +m2[2]-1, +m2[1]); return isNaN(d)?null:d; }
-  return null;
+  const d = new Date(str);
+  return isNaN(d) ? null : d;
 }
 function parseDurationToMin(s) {
-  if (!s) return 0;
+  if (s === null || s === undefined || s === '') return 0;
+  if (typeof s === 'number') return Math.round(s * 24 * 60); // Excel time fraction
   const parts = String(s).split(':').map(p => parseInt(p,10)||0);
   if (parts.length === 3) return parts[0]*60 + parts[1] + parts[2]/60;
   if (parts.length === 2) return parts[0]*60 + parts[1];
   return 0;
 }
 function parseTimeToMin(s) {
-  if (!s) return null;
+  if (s === null || s === undefined || s === '') return null;
+  if (typeof s === 'number') return Math.round(s * 24 * 60);
   const parts = String(s).split(':').map(p => parseInt(p,10)||0);
   if (parts.length >= 2) return parts[0]*60 + parts[1] + (parts[2]||0)/60;
   return null;
@@ -1090,37 +1183,79 @@ function normalizeMasterRow(r) {
     doj,
   };
 }
+function ingestParsedRows(rows, fields, fileName) {
+  const kind = detectFileKind(fields);
+  if (kind === 'attendance') {
+    const norm = rows.map(normalizeAttendanceRow).filter(r => r.empId && r.date);
+    State.rawAttendance = State.rawAttendance.concat(norm);
+    State.loadedFiles.push({ name: fileName, kind: 'attendance', count: norm.length });
+  } else if (kind === 'master') {
+    const norm = rows.map(normalizeMasterRow).filter(r => r.empId);
+    State.master = State.master.concat(norm);
+    State.loadedFiles.push({ name: fileName, kind: 'master', count: norm.length });
+  } else {
+    State.loadedFiles.push({ name: fileName, kind: 'unknown', count: 0 });
+    alert(`Could not detect file type for "${fileName}". Expected the Attendance Report or the Employee Master file.`);
+  }
+}
 function loadCsvFile(file) {
   return new Promise((resolve) => {
     Papa.parse(file, {
       header: true, skipEmptyLines: true, transformHeader: (h) => h.trim(),
       complete: (results) => {
-        const kind = detectFileKind(results.meta.fields);
-        if (kind === 'attendance') {
-          const rows = results.data.map(normalizeAttendanceRow).filter(r => r.empId && r.date);
-          State.rawAttendance = State.rawAttendance.concat(rows);
-          State.loadedFiles.push({ name: file.name, kind: 'attendance', count: rows.length });
-        } else if (kind === 'master') {
-          const rows = results.data.map(normalizeMasterRow).filter(r => r.empId);
-          State.master = State.master.concat(rows);
-          State.loadedFiles.push({ name: file.name, kind: 'master', count: rows.length });
-        } else {
-          State.loadedFiles.push({ name: file.name, kind: 'unknown', count: 0 });
-          alert(`Could not detect file type for "${file.name}". Expected an Attendance Report or an Employee Master file.`);
-        }
+        ingestParsedRows(results.data, results.meta.fields || [], file.name);
         resolve();
       },
       error: (err) => { alert(`Failed to parse ${file.name}: ${err.message}`); resolve(); }
     });
   });
 }
+function loadXlsxFile(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, { type: 'array', cellDates: true });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true });
+        if (!rawRows.length) {
+          alert(`No data found in ${file.name}.`);
+          return resolve();
+        }
+        // Trim header keys
+        const rows = rawRows.map(r => {
+          const out = {};
+          for (const k of Object.keys(r)) out[String(k).trim()] = r[k];
+          return out;
+        });
+        const fields = Object.keys(rows[0]);
+        ingestParsedRows(rows, fields, file.name);
+      } catch (err) {
+        alert(`Failed to parse ${file.name}: ${err.message}`);
+      }
+      resolve();
+    };
+    reader.onerror = () => { alert(`Failed to read ${file.name}`); resolve(); };
+    reader.readAsArrayBuffer(file);
+  });
+}
+function loadFile(file) {
+  const ext = file.name.toLowerCase().split('.').pop();
+  if (ext === 'xlsx' || ext === 'xls' || ext === 'xlsm' || ext === 'xlsb') return loadXlsxFile(file);
+  return loadCsvFile(file);
+}
 async function handleFiles(fileList) {
-  for (const f of Array.from(fileList)) await loadCsvFile(f);
-  if (State.rawAttendance.length > 0) {
+  for (const f of Array.from(fileList)) await loadFile(f);
+  const anyData = State.rawAttendance.length > 0 || State.master.length > 0;
+  if (anyData) {
     document.getElementById('emptyState').style.display = 'none';
-    document.getElementById('filterBar').style.display = 'flex';
     document.getElementById('clearBtn').classList.remove('hidden');
-    initFilters();
+    document.getElementById('printBtn').classList.remove('hidden');
+    if (State.rawAttendance.length > 0) {
+      document.getElementById('filterBar').style.display = 'flex';
+      initFilters();
+    }
     renderAll();
   }
   renderLoadedFiles();
@@ -1148,6 +1283,7 @@ function renderLoadedFiles() {
       document.getElementById('emptyState').style.display = '';
       document.getElementById('filterBar').style.display = 'none';
       document.getElementById('clearBtn').classList.add('hidden');
+      document.getElementById('printBtn').classList.add('hidden');
       Object.values(State.charts).forEach(c => c.destroy());
       State.charts = {};
     } else {
@@ -1163,6 +1299,7 @@ function clearAll() {
   document.getElementById('emptyState').style.display = '';
   document.getElementById('filterBar').style.display = 'none';
   document.getElementById('clearBtn').classList.add('hidden');
+  document.getElementById('printBtn').classList.add('hidden');
   renderLoadedFiles();
 }
 
@@ -1346,93 +1483,158 @@ function renderExec(rows) {
 }
 
 /* ---------- Section 2: Workforce ---------- */
-function renderWorkforce(rows) {
-  const empIds = new Set(rows.map(r => r.empId));
-  const headcount = empIds.size;
-  const empMap = new Map();
-  rows.forEach(r => {
-    if (!empMap.has(r.empId)) empMap.set(r.empId, { id: r.empId, name: r.empName, dept: r.dept, designation: r.designation, manager: r.manager, shift: r.shift });
-  });
+const LEADERSHIP_RE = /director|vice president|^vp\b|\bvp\b|head|chief|svp|cro|ceo|cto|cfo|senior manager|associate director/i;
+function isFemale(s) { return /female/i.test(s||''); }
+function isMale(s) { const v = String(s||''); return /male/i.test(v) && !/female/i.test(v); }
 
-  const kpis = [];
-  kpis.push(kpiCard({label:'Total Headcount', value: fmtNum(headcount)}));
-  kpis.push(kpiCard({label:'Departments', value: fmtNum(new Set(Array.from(empMap.values()).map(e=>e.dept)).size)}));
-  kpis.push(kpiCard({label:'Designations', value: fmtNum(new Set(Array.from(empMap.values()).map(e=>e.designation)).size)}));
-  kpis.push(kpiCard({label:'Managers', value: fmtNum(new Set(Array.from(empMap.values()).map(e=>e.manager)).size), sub:'distinct direct managers'}));
-  const ramadanEmps = new Set(rows.filter(r => r.isRamadan).map(r => r.empId)).size;
-  kpis.push(kpiCard({label:'On Ramadan Shift', value: fmtNum(ramadanEmps), sub:'in range'}));
-  if (State.master.length) {
-    const mEmps = State.master.filter(m => empIds.has(String(m.empId)));
-    const male = mEmps.filter(m => /male/i.test(m.gender) && !/female/i.test(m.gender)).length;
-    const female = mEmps.filter(m => /female/i.test(m.gender)).length;
-    kpis.push(kpiCard({label:'Female %', value: fmtPct((female/(male+female||1))*100), sub:`${female} of ${male+female}`}));
-    const nationalities = new Set(mEmps.map(m => m.nationality).filter(Boolean));
-    kpis.push(kpiCard({label:'Nationalities', value: fmtNum(nationalities.size)}));
-    const tenures = mEmps.filter(m => m.doj).map(m => (new Date() - m.doj)/(1000*60*60*24*365));
-    kpis.push(kpiCard({label:'Avg Tenure', value: tenures.length ? tenures.reduce((s,v)=>s+v,0)/tenures.length : 0, sub: 'years'}));
-    // fix: format avg tenure
-    const avg = tenures.length ? tenures.reduce((s,v)=>s+v,0)/tenures.length : 0;
-    kpis[kpis.length-1] = kpiCard({label:'Avg Tenure', value: avg.toFixed(1)+' yrs', sub:'since joining'});
-  } else {
-    const rosterCount = new Set(rows.map(r => r.empId)).size;
-    kpis.push(kpiCard({label:'Active Roster', value: fmtNum(rosterCount), sub: 'observed in range'}));
+function renderWorkforce(/* attendance rows — not used here */) {
+  const emptyEl = document.getElementById('workforceEmpty');
+  const contentEl = document.getElementById('workforceContent');
+  const workforceChartIds = ['chartHcByMonth','chartJoinersByMonth','chartWfDept','chartHcByLevel','chartWfDesignation','chartWfNationality','chartWfGender','chartLeadership','chartGenderByDept','chartFemaleTrend','chartWfTenure'];
+
+  if (!State.master.length) {
+    emptyEl.classList.remove('hidden');
+    contentEl.classList.add('hidden');
+    workforceChartIds.forEach(id => { if (State.charts[id]) { State.charts[id].destroy(); delete State.charts[id]; } });
+    document.querySelector('#spanOfControlTable tbody').innerHTML = '';
+    document.getElementById('workforceKpis').innerHTML = '';
+    document.getElementById('orgMetrics').innerHTML = '';
+    return;
   }
-  document.getElementById('workforceKpis').innerHTML = kpis.join('');
+  emptyEl.classList.add('hidden');
+  contentEl.classList.remove('hidden');
 
-  const byDept = groupBy(Array.from(empMap.values()), e => e.dept);
+  // "As of" date for snapshots: use filter.to (or today if no attendance loaded)
+  const asOf = State.filters.to || new Date();
+
+  // Filter master employees by selected dept / employee / DOJ <= asOf
+  let mEmps = State.master.filter(m => m.doj && m.doj <= asOf);
+  if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
+  if (State.filters.employee !== 'all') mEmps = mEmps.filter(m => String(m.empId) === String(State.filters.employee));
+
+  /* ---------- KPIs ---------- */
+  const totalHC = mEmps.length;
+  const deptSet = new Set(mEmps.map(m => m.dept).filter(Boolean));
+  const desSet = new Set(mEmps.map(m => m.designation).filter(Boolean));
+  const male = mEmps.filter(m => isMale(m.gender)).length;
+  const female = mEmps.filter(m => isFemale(m.gender)).length;
+  const femalePct = (male+female) ? female/(male+female)*100 : 0;
+  const natSet = new Set(mEmps.map(m => m.nationality).filter(Boolean));
+  const tenures = mEmps.map(m => (asOf - m.doj)/(1000*60*60*24*365));
+  const avgTenure = tenures.length ? tenures.reduce((s,v)=>s+v,0)/tenures.length : 0;
+
+  document.getElementById('workforceKpis').innerHTML = [
+    kpiCard({label:'Total Headcount', value: fmtNum(totalHC), sub: `active as of ${toInputDate(asOf)}`}),
+    kpiCard({label:'Departments', value: fmtNum(deptSet.size)}),
+    kpiCard({label:'Designations', value: fmtNum(desSet.size)}),
+    kpiCard({label:'Female %', value: fmtPct(femalePct), sub: `${female} of ${male+female}`}),
+    kpiCard({label:'Nationalities', value: fmtNum(natSet.size)}),
+    kpiCard({label:'Avg Tenure', value: avgTenure.toFixed(1)+' yrs', sub: 'since joining'}),
+  ].join('');
+
+  /* ---------- Trends: HC by month + Joiners by month + Female trend ---------- */
+  const allDojs = mEmps.map(m => m.doj).sort((a,b) => a-b);
+  if (allDojs.length) {
+    const firstMonth = new Date(allDojs[0].getFullYear(), allDojs[0].getMonth(), 1);
+    const lastMonth = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
+    const months = [];
+    const cur = new Date(firstMonth);
+    while (cur <= lastMonth) { months.push(new Date(cur)); cur.setMonth(cur.getMonth()+1); }
+    const monthLabels = months.map(d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'));
+
+    const hcByMonth = months.map(ms => {
+      const me = new Date(ms.getFullYear(), ms.getMonth()+1, 0); // last day of month
+      return mEmps.filter(m => m.doj <= me).length;
+    });
+    drawLine('chartHcByMonth', monthLabels, [
+      { label: 'Cumulative HC', data: hcByMonth, color: COLORS.primary, fill: true }
+    ]);
+
+    const joinersByMonth = months.map(ms => {
+      const next = new Date(ms.getFullYear(), ms.getMonth()+1, 1);
+      return mEmps.filter(m => m.doj >= ms && m.doj < next).length;
+    });
+    drawBar('chartJoinersByMonth', monthLabels, joinersByMonth, 'Joiners');
+
+    const femaleTrend = months.map(ms => {
+      const me = new Date(ms.getFullYear(), ms.getMonth()+1, 0);
+      const active = mEmps.filter(m => m.doj <= me);
+      const f = active.filter(m => isFemale(m.gender)).length;
+      const ml = active.filter(m => isMale(m.gender)).length;
+      return (f+ml) ? +(f/(f+ml)*100).toFixed(1) : 0;
+    });
+    drawLine('chartFemaleTrend', monthLabels, [
+      { label: 'Female %', data: femaleTrend, color: COLORS.pink, fill: true }
+    ]);
+  }
+
+  /* ---------- Distribution charts ---------- */
+  const byDept = groupBy(mEmps, m => m.dept || 'Unassigned');
   const deptNames = Object.keys(byDept).sort();
   drawBar('chartWfDept', deptNames, deptNames.map(d => byDept[d].length), 'Headcount');
 
-  const byDes = groupBy(Array.from(empMap.values()), e => e.designation || 'Unknown');
-  const desEntries = Object.entries(byDes).sort((a,b) => b[1].length - a[1].length).slice(0,15);
-  drawBar('chartWfDesignation', desEntries.map(d=>d[0]), desEntries.map(d=>d[1].length), 'Headcount', { horizontal: true });
+  const byLevel = groupBy(mEmps, m => m.contribLevel || 'Unknown');
+  const levelLabels = Object.keys(byLevel);
+  drawPie('chartHcByLevel', levelLabels, levelLabels.map(k => byLevel[k].length));
 
-  const byShift = {};
-  Array.from(empMap.values()).forEach(e => {
-    const empRows = rows.filter(r => r.empId === e.id);
-    const ramadan = empRows.some(r => r.isRamadan);
-    const key = ramadan ? 'Standard + Ramadan' : 'Standard Only';
-    byShift[key] = (byShift[key]||0) + 1;
+  const byDes = groupBy(mEmps, m => m.designation || 'Unknown');
+  const desEntries = Object.entries(byDes).sort((a,b) => b[1].length - a[1].length).slice(0, 15);
+  drawBar('chartWfDesignation', desEntries.map(d => d[0]), desEntries.map(d => d[1].length), 'Employees', { horizontal: true });
+
+  const natCount = {};
+  mEmps.forEach(m => { if (m.nationality) natCount[m.nationality] = (natCount[m.nationality]||0)+1; });
+  const natTop = Object.entries(natCount).sort((a,b)=>b[1]-a[1]).slice(0, 10);
+  drawBar('chartWfNationality', natTop.map(n=>n[0]), natTop.map(n=>n[1]), 'Employees', { horizontal: true });
+
+  /* ---------- Diversity ---------- */
+  drawPie('chartWfGender', ['Male','Female'], [male, female]);
+
+  const leadership = mEmps.filter(m => LEADERSHIP_RE.test(m.designation));
+  const ldMale = leadership.filter(m => isMale(m.gender)).length;
+  const ldFemale = leadership.filter(m => isFemale(m.gender)).length;
+  drawPie('chartLeadership', ['Male','Female'], [ldMale, ldFemale]);
+
+  const genderByDept = deptNames.map(d => {
+    const emps = byDept[d];
+    return {
+      male: emps.filter(m => isMale(m.gender)).length,
+      female: emps.filter(m => isFemale(m.gender)).length,
+    };
   });
-  drawPie('chartWfShift', Object.keys(byShift), Object.values(byShift));
+  drawStackedBar('chartGenderByDept', deptNames, [
+    { label: 'Male',   data: genderByDept.map(g => g.male),   color: COLORS.primary },
+    { label: 'Female', data: genderByDept.map(g => g.female), color: COLORS.pink },
+  ]);
 
-  const masterUsed = State.master.length > 0;
-  const masterChartIds = ['chartWfGender','chartWfNationality','chartWfTenure','chartWfJoiners'];
-  masterChartIds.forEach(id => setChartEmptyState(id, !masterUsed, 'Upload Employee Master CSV', 'Provides gender, nationality, tenure & joining data'));
+  /* ---------- Tenure distribution ---------- */
+  const tenBands = { '<1y':0, '1-2y':0, '2-3y':0, '3-4y':0, '4-5y':0, '5y+':0 };
+  mEmps.forEach(m => {
+    const y = (asOf - m.doj)/(1000*60*60*24*365);
+    if (y < 1) tenBands['<1y']++; else if (y < 2) tenBands['1-2y']++; else if (y < 3) tenBands['2-3y']++;
+    else if (y < 4) tenBands['3-4y']++; else if (y < 5) tenBands['4-5y']++; else tenBands['5y+']++;
+  });
+  drawBar('chartWfTenure', Object.keys(tenBands), Object.values(tenBands), 'Employees');
 
-  if (masterUsed) {
-    const mEmps = State.master.filter(m => empIds.has(String(m.empId)));
-    const gMale = mEmps.filter(m => /male/i.test(m.gender) && !/female/i.test(m.gender)).length;
-    const gFemale = mEmps.filter(m => /female/i.test(m.gender)).length;
-    drawPie('chartWfGender', ['Male','Female'], [gMale, gFemale]);
-    const natCount = {};
-    mEmps.forEach(m => { if (m.nationality) natCount[m.nationality] = (natCount[m.nationality]||0)+1; });
-    const natTop = Object.entries(natCount).sort((a,b)=>b[1]-a[1]).slice(0,10);
-    drawBar('chartWfNationality', natTop.map(n=>n[0]), natTop.map(n=>n[1]), 'Employees', { horizontal: true });
-    const tenBands = { '<1y':0, '1-2y':0, '2-3y':0, '3-4y':0, '4-5y':0, '5y+':0 };
-    mEmps.forEach(m => {
-      if (!m.doj) return;
-      const y = (new Date() - m.doj)/(1000*60*60*24*365);
-      if (y < 1) tenBands['<1y']++; else if (y < 2) tenBands['1-2y']++; else if (y < 3) tenBands['2-3y']++;
-      else if (y < 4) tenBands['3-4y']++; else if (y < 5) tenBands['4-5y']++; else tenBands['5y+']++;
-    });
-    drawBar('chartWfTenure', Object.keys(tenBands), Object.values(tenBands), 'Employees');
-    const byYear = {};
-    mEmps.forEach(m => { if (m.doj) { const y = m.doj.getFullYear(); byYear[y] = (byYear[y]||0)+1; } });
-    const years = Object.keys(byYear).sort();
-    drawBar('chartWfJoiners', years, years.map(y => byYear[y]), 'Joiners');
-  } else {
-    masterChartIds.forEach(id => {
-      if (State.charts[id]) { State.charts[id].destroy(); delete State.charts[id]; }
-    });
-  }
-
-  const byMgr = groupBy(Array.from(empMap.values()), e => e.manager);
+  /* ---------- Org structure ---------- */
+  const byMgr = groupBy(mEmps, m => m.manager || 'Unassigned');
   const mgrEntries = Object.entries(byMgr).sort((a,b) => b[1].length - a[1].length);
   document.querySelector('#spanOfControlTable tbody').innerHTML = mgrEntries.map(([mgr, emps]) => {
-    const depts = Array.from(new Set(emps.map(e=>e.dept))).sort().join(', ');
+    const depts = Array.from(new Set(emps.map(e => e.dept).filter(Boolean))).sort().join(', ');
     return `<tr><td><strong>${escapeHtml(mgr)}</strong></td><td class="num">${emps.length}</td><td>${escapeHtml(depts)}</td></tr>`;
-  }).join('');
+  }).join('') || emptyRow(3);
+
+  const teamSizes = mgrEntries.map(([_, emps]) => emps.length);
+  const avgTeam = teamSizes.length ? teamSizes.reduce((s,v)=>s+v,0)/teamSizes.length : 0;
+  const maxTeam = teamSizes.length ? Math.max(...teamSizes) : 0;
+  const soloMgrs = teamSizes.filter(s => s === 1).length;
+  document.getElementById('orgMetrics').innerHTML = `
+    <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 4px;">
+      <div><div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600;">Avg team size</div><div style="font-size:22px; font-weight:600; margin-top:4px; letter-spacing:-0.01em;">${avgTeam.toFixed(1)}</div></div>
+      <div><div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600;">Largest team</div><div style="font-size:22px; font-weight:600; margin-top:4px; letter-spacing:-0.01em;">${maxTeam}</div></div>
+      <div><div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600;">Distinct managers</div><div style="font-size:22px; font-weight:600; margin-top:4px; letter-spacing:-0.01em;">${mgrEntries.length}</div></div>
+      <div><div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600;">Managers w/ 1 report</div><div style="font-size:22px; font-weight:600; margin-top:4px; letter-spacing:-0.01em;">${soloMgrs}</div></div>
+    </div>
+  `;
 }
 
 /* ---------- Section 3: Attendance ---------- */
@@ -1832,6 +2034,52 @@ function drawPie(canvasId, labels, data) {
   });
 }
 
+function drawStackedBar(canvasId, labels, datasets) {
+  destroyIfExists(canvasId);
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  State.charts[canvasId] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: datasets.map(ds => ({
+        label: ds.label,
+        data: ds.data,
+        backgroundColor: ds.color,
+        borderRadius: 4,
+        borderSkipped: false,
+        maxBarThickness: 44,
+      }))
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false, drawBorder: false },
+          border: { display: false },
+          ticks: { font: { size: 11 }, color: '#64748b', maxRotation: 45, autoSkip: false,
+            callback: function(val) {
+              const lbl = this.getLabelForValue(val);
+              return lbl && lbl.length > 28 ? lbl.slice(0,27)+'…' : lbl;
+            }
+          }
+        },
+        y: {
+          stacked: true, beginAtZero: true,
+          grid: { color: '#f1f5f9', drawBorder: false },
+          border: { display: false },
+          ticks: { font: { size: 11 }, color: '#64748b' }
+        }
+      },
+      plugins: {
+        legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 10, font: { size: 12 }, color: '#475569', usePointStyle: true, pointStyle: 'circle' } },
+        tooltip: baseTooltipOpts,
+      }
+    }
+  });
+}
+
 /* ---------- Sidebar navigation ---------- */
 document.getElementById('sideNav').addEventListener('click', (e) => {
   const btn = e.target.closest('.nav-item'); if (!btn) return;
@@ -1863,6 +2111,26 @@ dropZone.addEventListener('click', () => fileInput.click());
 ['dragleave','drop'].forEach(ev => dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); }));
 dropZone.addEventListener('drop', (e) => { handleFiles(e.dataTransfer.files); });
 document.getElementById('clearBtn').addEventListener('click', () => { if (confirm('Clear all loaded data?')) clearAll(); });
+
+/* ---------- Print ---------- */
+document.getElementById('printBtn').addEventListener('click', () => {
+  const meta = PAGE_META[State.activeTab] || { title: 'RED HR Dashboard', crumb: '' };
+  document.getElementById('printTitle').textContent = 'RED HR Dashboard — ' + meta.title;
+  const fromStr = State.filters.from ? toInputDate(State.filters.from) : '–';
+  const toStr = State.filters.to ? toInputDate(State.filters.to) : '–';
+  const deptStr = State.filters.dept === 'all' ? 'All departments' : State.filters.dept;
+  const empStr = State.filters.employee === 'all' ? 'All employees' : State.filters.employee;
+  document.getElementById('printMeta').textContent =
+    `${meta.crumb} · ${deptStr} · ${empStr} · ${fromStr} → ${toStr} · printed ${toInputDate(new Date())}`;
+  window.print();
+});
+// Resize charts before printing so they scale to the page
+window.addEventListener('beforeprint', () => {
+  Object.values(State.charts).forEach(c => { try { c.resize(); } catch(_) {} });
+});
+window.addEventListener('afterprint', () => {
+  Object.values(State.charts).forEach(c => { try { c.resize(); } catch(_) {} });
+});
 
 window.addEventListener('dragover', (e) => { e.preventDefault(); });
 window.addEventListener('drop', (e) => {
