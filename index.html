@@ -725,6 +725,12 @@
         </div>
 
         <div id="workforceContent">
+          <div id="workforceSnapshotBadge" style="display:none; margin-bottom:18px; background:var(--primary-soft); border:1px solid #c7d2fe; color:var(--primary); padding:10px 14px; border-radius:8px; font-size:12.5px; display:flex; align-items:center; gap:8px;">
+            <strong style="font-weight:600;">Snapshot date:</strong>
+            <span id="workforceSnapshotDate"></span>
+            <span style="color:var(--text-muted); margin-left:auto; font-weight:400;" id="workforceSnapshotSource"></span>
+          </div>
+
           <div class="section-block">
             <h3 class="section-heading">Composition</h3>
             <div class="kpi-grid" id="workforceKpis"></div>
@@ -1050,6 +1056,7 @@ const COLORS = {
 const State = {
   rawAttendance: [],
   master: [],
+  masterMeta: null,           // { snapshotDate, fileName } detected from master file name
   filters: { dept: 'all', employee: 'all', from: null, to: null },
   charts: {},
   loadedFiles: [],
@@ -1163,26 +1170,120 @@ function normalizeAttendanceRow(r) {
     isSick, isAnnualLeave, isAnyLeave, isLate, underTarget, isScheduledWorkday,
   };
 }
+// Normalize a column header for fuzzy comparison: lowercase, strip whitespace/punctuation
+function normalizeKey(s) {
+  return String(s||'').toLowerCase().replace(/[\s_\-\.\/&]+/g, '').replace(/[^a-z0-9]/g, '');
+}
+// Pick a row value by trying several header variants (case/whitespace/punctuation insensitive,
+// then partial-contains as a fallback).
+function pickField(row, candidates) {
+  const keys = Object.keys(row);
+  const map = {};
+  for (const k of keys) map[normalizeKey(k)] = k;
+  // Pass 1: exact normalized match
+  for (const cand of candidates) {
+    const k = map[normalizeKey(cand)];
+    if (k !== undefined && row[k] !== '' && row[k] != null) return row[k];
+  }
+  // Pass 2: any header whose normalized form contains the candidate's normalized form
+  // (e.g. "contribution" → matches "Contribution Level Name" or "Contribution Name")
+  for (const cand of candidates) {
+    const t = normalizeKey(cand);
+    if (!t) continue;
+    for (const k of keys) {
+      if (normalizeKey(k).includes(t) && row[k] !== '' && row[k] != null) return row[k];
+    }
+  }
+  return '';
+}
+
 function normalizeMasterRow(r) {
-  const id = r['Employee Id'] || r['Employee ID'];
-  const fullName = r['Full Name'] || r['Employee Name'];
-  const doj = parseDate(r['Date Of Joining'] || r['Date of Joining']);
-  const dob = parseDate(r['Date Of Birth'] || r['Date of Birth']);
+  const id          = pickField(r, ['Employee Id', 'Employee ID', 'EmpId', 'ID']);
+  const fullName    = pickField(r, ['Full Name', 'Employee Name', 'Name']);
+  const doj         = parseDate(pickField(r, ['Date Of Joining', 'Date of Joining', 'Joining Date', 'DOJ', 'Hire Date']));
+  const dob         = parseDate(pickField(r, ['Date Of Birth', 'Date of Birth', 'DOB', 'Birth Date']));
+  // Country / Nationality — whichever the file uses, displayed verbatim
+  const natRaw      = pickField(r, ['Country', 'Country of Origin', 'Nationality']);
+  // Contribution Level — accept "Contribution Level", "Contribution Level Name", "Contribution Name", etc.
+  const contrib     = pickField(r, ['Contribution Level', 'Contribution Level Name', 'Contribution Name', 'Contribution', 'Grade Level', 'Grade', 'Band', 'Level']);
+  const designation = pickField(r, ['Current Designation', 'Designation', 'Job Title', 'Title', 'Position']);
+  const dept        = pickField(r, ['Current Department/Function', 'Current Department', 'Department/Function', 'Department', 'Department Name', 'Function', 'Dept']);
+  const division    = pickField(r, ['Division Name', 'Division']);
+  const manager     = pickField(r, ['Direct Manager Name', 'Direct Manager', 'Manager Name', 'Line Manager', 'Reporting Manager', 'Manager']);
+  const email       = pickField(r, ['Official Email Id', 'Email', 'Email Id', 'Email Address', 'Work Email']);
+  const gender      = pickField(r, ['Gender', 'Sex']);
+  const mobile      = pickField(r, ['Mobile Number', 'Mobile', 'Phone Number', 'Phone']);
   return {
-    empId: id ? String(id).trim() : '',
-    fullName: fullName ? String(fullName).trim() : '',
-    designation: r['Current Designation'] || '',
-    dept: r['Current Department/Function'] || '',
-    contribLevel: r['Contribution Level'] || '',
-    division: r['Division Name'] || '',
-    manager: r['Direct Manager Name'] || '',
-    email: r['Official Email Id'] || '',
-    dob, gender: (r['Gender']||'').trim(),
-    nationality: (r['Nationality']||'').trim(),
-    mobile: r['Mobile Number'] || '',
+    empId:        id ? String(id).trim() : '',
+    fullName:     fullName ? String(fullName).trim() : '',
+    designation:  String(designation || '').trim(),
+    dept:         String(dept || '').trim(),
+    contribLevel: String(contrib || '').trim(),
+    division:     String(division || '').trim(),
+    manager:      String(manager || '').trim(),
+    email:        String(email || '').trim(),
+    dob,
+    gender:       String(gender || '').trim(),
+    nationality:  String(natRaw || '').trim(),
+    mobile:       String(mobile || '').trim(),
     doj,
   };
 }
+const MONTH_NAMES = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
+  apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6,
+  aug: 7, august: 7, sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+};
+function normalizeYear(y) {
+  const n = parseInt(y, 10);
+  if (n < 100) return n + (n < 50 ? 2000 : 1900);
+  return n;
+}
+/**
+ * Try to extract a snapshot/as-of date from a file name like:
+ *   "27 Jan 2026 Master Report.xlsx"     → 2026-01-27
+ *   "Jan 2026 Master.xlsx"               → end of Jan 2026
+ *   "Master_2026-01.csv"                 → end of Jan 2026
+ *   "HRBP-DailyReport_13-May-26.csv"     → 2026-05-13
+ *   "2026-01-31 master.xlsx"             → 2026-01-31
+ * Returns null if no recognisable date is found.
+ */
+function detectSnapshotDate(fileName) {
+  if (!fileName) return null;
+  const s = String(fileName).toLowerCase().replace(/\.[a-z0-9]+$/, '');
+
+  // DD <Month> YY/YYYY  (or DD-Month-YY etc.)
+  let m = s.match(/(\d{1,2})[\s_\-\.]+([a-z]{3,9})[\s_\-\.]+(\d{2,4})/);
+  if (m && MONTH_NAMES[m[2]] !== undefined) {
+    const d = new Date(normalizeYear(m[3]), MONTH_NAMES[m[2]], +m[1]);
+    if (!isNaN(d)) return d;
+  }
+  // <Month> YY/YYYY  → end of month
+  m = s.match(/\b([a-z]{3,9})[\s_\-\.]+(\d{2,4})\b/);
+  if (m && MONTH_NAMES[m[1]] !== undefined) {
+    return new Date(normalizeYear(m[2]), MONTH_NAMES[m[1]] + 1, 0);
+  }
+  // YYYY-MM-DD
+  m = s.match(/(\d{4})[\-_\.](\d{1,2})[\-_\.](\d{1,2})/);
+  if (m && +m[2] <= 12 && +m[3] <= 31) {
+    const d = new Date(+m[1], +m[2]-1, +m[3]);
+    if (!isNaN(d)) return d;
+  }
+  // YYYY-MM  → end of month
+  m = s.match(/(\d{4})[\-_\.](\d{1,2})(?!\d)/);
+  if (m && +m[2] <= 12) {
+    return new Date(+m[1], +m[2], 0);
+  }
+  // DD/MM/YY(YY) or DD-MM-YY(YY)
+  m = s.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+  if (m && +m[1] <= 31 && +m[2] <= 12) {
+    const d = new Date(normalizeYear(m[3]), +m[2]-1, +m[1]);
+    if (!isNaN(d)) return d;
+  }
+  return null;
+}
+
 function ingestParsedRows(rows, fields, fileName) {
   const kind = detectFileKind(fields);
   if (kind === 'attendance') {
@@ -1192,7 +1293,11 @@ function ingestParsedRows(rows, fields, fileName) {
   } else if (kind === 'master') {
     const norm = rows.map(normalizeMasterRow).filter(r => r.empId);
     State.master = State.master.concat(norm);
-    State.loadedFiles.push({ name: fileName, kind: 'master', count: norm.length });
+    const snapshotDate = detectSnapshotDate(fileName);
+    State.masterMeta = State.masterMeta || {};
+    State.masterMeta.snapshotDate = snapshotDate;
+    State.masterMeta.fileName = fileName;
+    State.loadedFiles.push({ name: fileName, kind: 'master', count: norm.length, snapshotDate });
   } else {
     State.loadedFiles.push({ name: fileName, kind: 'unknown', count: 0 });
     alert(`Could not detect file type for "${fileName}". Expected the Attendance Report or the Employee Master file.`);
@@ -1277,6 +1382,7 @@ function renderLoadedFiles() {
       State.loadedFiles = State.loadedFiles.filter(f => f.kind !== 'attendance');
     } else if (removed.kind === 'master') {
       State.master = [];
+      State.masterMeta = null;
       State.loadedFiles = State.loadedFiles.filter(f => f.kind !== 'master');
     }
     if (State.rawAttendance.length === 0) {
@@ -1293,7 +1399,7 @@ function renderLoadedFiles() {
   }));
 }
 function clearAll() {
-  State.rawAttendance = []; State.master = []; State.loadedFiles = [];
+  State.rawAttendance = []; State.master = []; State.loadedFiles = []; State.masterMeta = null;
   State.filters = { dept: 'all', employee: 'all', from: null, to: null };
   Object.values(State.charts).forEach(c => c.destroy()); State.charts = {};
   document.getElementById('emptyState').style.display = '';
@@ -1504,8 +1610,29 @@ function renderWorkforce(/* attendance rows — not used here */) {
   emptyEl.classList.add('hidden');
   contentEl.classList.remove('hidden');
 
-  // "As of" date for snapshots: use filter.to (or today if no attendance loaded)
-  const asOf = State.filters.to || new Date();
+  // "As of" date for the master snapshot — precedence:
+  //   1. Date detected from master file name (e.g. "27 Jan 2026 ...")
+  //   2. Latest Date Of Joining in the master file (lower-bound proxy)
+  //   3. Filter "To" date (only if neither above is available)
+  //   4. Today
+  let asOf, asOfSource;
+  if (State.masterMeta && State.masterMeta.snapshotDate) {
+    asOf = State.masterMeta.snapshotDate;
+    asOfSource = `detected from file name (${escapeHtml(State.masterMeta.fileName || '')})`;
+  } else {
+    const dojs = State.master.map(m => m.doj).filter(Boolean).sort((a,b) => b-a);
+    if (dojs.length) { asOf = dojs[0]; asOfSource = 'latest joining date in file (no date in filename)'; }
+    else if (State.filters.to) { asOf = State.filters.to; asOfSource = 'from attendance date range'; }
+    else { asOf = new Date(); asOfSource = "today's date"; }
+  }
+
+  // Snapshot badge
+  const badge = document.getElementById('workforceSnapshotBadge');
+  if (badge) {
+    badge.style.display = 'flex';
+    document.getElementById('workforceSnapshotDate').textContent = toInputDate(asOf);
+    document.getElementById('workforceSnapshotSource').textContent = asOfSource;
+  }
 
   // Filter master employees by selected dept / employee / DOJ <= asOf
   let mEmps = State.master.filter(m => m.doj && m.doj <= asOf);
