@@ -1056,6 +1056,9 @@ const COLORS = {
 const State = {
   rawAttendance: [],
   master: [],
+  leaves: [],                 // optional: from a Leaves sheet (granular leave records)
+  offsite: [],                // optional: from an Offsite Duty sheet
+  shortLeaves: [],            // optional: from a Short Leave sheet
   masterMeta: null,           // { snapshotDate, fileName } detected from master file name
   filters: { dept: 'all', employee: 'all', from: null, to: null },
   charts: {},
@@ -1082,7 +1085,12 @@ function parseDate(s) {
 }
 function parseDurationToMin(s) {
   if (s === null || s === undefined || s === '') return 0;
-  if (typeof s === 'number') return Math.round(s * 24 * 60); // Excel time fraction
+  if (s instanceof Date) {
+    // SheetJS encodes Excel time cells as Date objects in UTC (epoch 1899-12-30).
+    // Extract H/M/S from UTC to reconstruct the duration.
+    return s.getUTCHours()*60 + s.getUTCMinutes() + s.getUTCSeconds()/60;
+  }
+  if (typeof s === 'number') return s * 24 * 60; // Excel time fraction (days)
   const parts = String(s).split(':').map(p => parseInt(p,10)||0);
   if (parts.length === 3) return parts[0]*60 + parts[1] + parts[2]/60;
   if (parts.length === 2) return parts[0]*60 + parts[1];
@@ -1090,7 +1098,10 @@ function parseDurationToMin(s) {
 }
 function parseTimeToMin(s) {
   if (s === null || s === undefined || s === '') return null;
-  if (typeof s === 'number') return Math.round(s * 24 * 60);
+  if (s instanceof Date) {
+    return s.getUTCHours()*60 + s.getUTCMinutes() + s.getUTCSeconds()/60;
+  }
+  if (typeof s === 'number') return s * 24 * 60;
   const parts = String(s).split(':').map(p => parseInt(p,10)||0);
   if (parts.length >= 2) return parts[0]*60 + parts[1] + (parts[2]||0)/60;
   return null;
@@ -1117,57 +1128,175 @@ function groupBy(arr, keyFn) {
 }
 const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-/* ---------- CSV ---------- */
+/* ---------- CSV / XLSX ---------- */
 function detectFileKind(fields) {
-  const f = (fields||[]).map(x => x.toLowerCase());
-  if (f.includes('clock in') || f.includes('clock out') || f.includes('total work duration')) return 'attendance';
-  if (f.includes('date of joining') || f.includes('date of birth') || f.includes('nationality')) return 'master';
+  const f = (fields||[]).map(x => normalizeKey(x));
+  const has = (...keys) => keys.some(k => f.includes(normalizeKey(k)));
+  // Master report
+  if (has('Date Of Joining','Date of Joining','Joining Date','DOJ','Hire Date') ||
+      has('Date Of Birth','Date of Birth','DOB','Nationality','Country')) return 'master';
+  // Offsite Duty sheet
+  if (has('Out Duty Clock In Time','Out Duty Clock Out Time') ||
+      (has('Requested For Date','Requested To Date') && has('Reason'))) return 'offsite';
+  // Leaves sheet (full leave records)
+  if (has('Leave From Date','Leave To Date') ||
+      (has('Leave Type') && has('Calendar Days','Working Days','Leave Code'))) return 'leaves';
+  // Daily Attendance — both old and new schemas
+  if (has('Clock In','Clock Out','Total Work Duration') && has('Status')) return 'attendance';
+  // Short Leave sheet (if columns suggest it)
+  if (has('Short Leave Duration') || (has('Approval Date') && has('Department') && !has('Leave Type'))) return 'shortleave';
   return 'unknown';
 }
 function normalizeAttendanceRow(r) {
-  const dept = deptNameFromHierarchy(r['Departments Hierarchy With Code Level 1 - Top To Bottom']);
-  const date = parseDate(r['Date']);
-  const status = (r['Status']||'').trim();
-  const detail = (r['Detailed Status']||'').trim();
-  const shift = (r['Shift']||'').trim();
-  const clockInMin = parseTimeToMin(r['Clock In']);
-  const clockOutMin = parseTimeToMin(r['Clock Out']);
-  const workMin = parseDurationToMin(r['Total Work Duration']);
-  const stoMin = parseDurationToMin(r['Short Leave Duration']);
-  const reqStatus = (r['Request Status']||'').trim();
-  const reqReason = (r['Request Reason']||'').trim();
+  // Support both old and new HRBP attendance schemas via fuzzy header matching.
+  const empId      = pickField(r, ['Employee Id','Employee ID','EmpId']);
+  const empName    = pickField(r, ['Employee Name','Full Name','Employee Full Name']);
+  const division   = pickField(r, ['Division','Division Name']);
+  // Old schema: "Departments Hierarchy With Code Level 1 - Top To Bottom" with trailing "(code)"
+  // New schema: clean "Department" column
+  const deptRaw    = pickField(r, ['Department','Departments Hierarchy With Code Level 1 - Top To Bottom','Department Name','Dept']);
+  const dept       = deptNameFromHierarchy(deptRaw);
+  const designation = pickField(r, ['Current Designation','Designation','Job Title','Title']);
+  const manager    = pickField(r, ['Direct Manager Name','Direct Manager','Manager Name','Manager','Reporting Manager','Line Manager']) || 'Unassigned';
+  const hrbp       = pickField(r, ['Hrbp Name','HRBP Name','HRBP','HR Business Partner']);
+  const date       = parseDate(pickField(r, ['Date','Attendance Date']));
+  const status     = String(pickField(r, ['Status']) || '').trim();
+  // Old schema: single "Detailed Status" field describing the day.
+  // New schema: split across Adjustment 1/2, Offsite Duty, Leave Type. We concatenate everything.
+  const detailedStatus = String(pickField(r, ['Detailed Status']) || '').trim();
+  const adjustment1    = String(pickField(r, ['Adjustment 1','Adjustment','Adjustment Reason']) || '').trim();
+  const adjustment2    = String(pickField(r, ['Adjustment 2']) || '').trim();
+  const offsiteDuty    = String(pickField(r, ['Offsite Duty','Off Site Duty','Off-Site Duty']) || '').trim();
+  const leaveType      = String(pickField(r, ['Leave Type']) || '').trim();
+  const policy         = String(pickField(r, ['Policy','Attendance Policy']) || '').trim();
+  const shift          = String(pickField(r, ['Shift']) || '').trim();
+  const reqStatus      = String(pickField(r, ['Request Status']) || '').trim();
+  // "Request Reason" was the old column; in the new schema the reason lives in Adjustment 1/2 or Offsite Duty.
+  const reqReason      = String(pickField(r, ['Request Reason']) || '').trim()
+                         || adjustment1 || adjustment2 || offsiteDuty;
+
+  // Build a synthetic "detail" string downstream regexes can search.
+  const detail = [detailedStatus, leaveType, adjustment1, adjustment2, offsiteDuty].filter(Boolean).join(' | ');
+
+  const clockInMin  = parseTimeToMin(pickField(r, ['Clock In','Clock-In','Clockin']));
+  const clockOutMin = parseTimeToMin(pickField(r, ['Clock Out','Clock-Out','Clockout']));
+  const workMin     = parseDurationToMin(pickField(r, ['Total Work Duration','Work Duration','Total Hours']));
 
   const isRamadan = /ramadan/i.test(shift);
   const targetMin = isRamadan ? 7*60 : 9*60;
-  // Standard window is 7:30–9:00 start (4 valid start times). Ramadan keeps the same
-  // start flexibility, only the day length shrinks to 7h. So "late" = clock-in after 09:00
-  // for both shift types.
+
+  // Short Time Off detection.
+  // Old schema: dedicated "Short Leave Duration" column.
+  // New schema: implicit — the day has a personal-reason adjustment + the worked hours fall short of target.
+  //   Reasons defined by company policy: Medical Appointment, Children School Event,
+  //   Personal (school) Emergencies, Religious or Cultural Activities.
+  const STO_REASON_RE = /children\s*school\s*event|medical\s*appointment|personal\s*emergenc|school\s*emergenc|religious|cultural\s*activit/i;
+  const stoReason = [adjustment1, adjustment2, offsiteDuty, detailedStatus, leaveType].find(s => s && STO_REASON_RE.test(s)) || '';
+  let stoMin = parseDurationToMin(pickField(r, ['Short Leave Duration','Short Leave']));
+  if (!stoMin && stoReason && workMin > 0 && workMin < targetMin) {
+    stoMin = targetMin - workMin;
+  }
+  const isSto = stoMin > 0 || !!stoReason;
+  // Standard window is 7:30–9:00 start (4 valid start times). Ramadan keeps the same start flexibility,
+  // only the day length shrinks to 7h. So "late" = clock-in after 09:00 for both shift types.
   const lateThreshold = 9*60;
 
-  const isWeeklyOff = /weekly off/i.test(status) || /weekly off/i.test(detail);
-  const isHoliday = /holiday/i.test(status) || /holiday/i.test(detail);
-  const isPresent = /present/i.test(status);
+  const isWeeklyOff   = /weekly off/i.test(status) || /weekly off/i.test(detail);
+  const isHoliday     = /holiday/i.test(status) || /holiday/i.test(detail);
+  const isPresent     = /present/i.test(status);
   const isSinglePunch = /single punch/i.test(status);
-  const isAbsent = !isPresent && !isWeeklyOff && !isHoliday;
-  const isWFH = /work from home/i.test(detail);
-  const isOffsite = /off site|offsite|off-site/i.test(detail);
-  const isAdjustment = /attendance adjustment/i.test(detail);
-  const isRemote = isWFH || (isOffsite && /remote/i.test(reqReason));
-  const isSick = /sick/i.test(status) || /sick/i.test(detail);
-  const isAnnualLeave = /annual leave/i.test(status) || /annual leave/i.test(detail);
-  const isAnyLeave = isSick || isAnnualLeave || /leave/i.test(status) || /leave/i.test(detail);
-  const isLate = isPresent && clockInMin !== null && clockInMin > lateThreshold;
-  const underTarget = isPresent && workMin > 0 && workMin < targetMin;
+  const isLeaveDay    = /^\s*leave\s*$/i.test(status) || /,\s*leave\s*$/i.test(status);
+  const isAbsent      = !isPresent && !isWeeklyOff && !isHoliday && !isLeaveDay;
+
+  // Adjustment: old schema flagged via Detailed Status. New schema: any of Adjustment 1/2 filled,
+  // OR Request Status non-empty when status contains ",Request".
+  const isAdjustment = /attendance adjustment/i.test(detailedStatus) ||
+                       !!(adjustment1 || adjustment2);
+
+  // Remote / Off-site. New schema: Offsite Duty column lists the reason (Remote Work, Client Meeting, Training, etc.)
+  // Adjustment 1 can also say "Remote Work" when WFH is approved via attendance adjustment.
+  const isRemote = /work from home/i.test(detail) ||
+                   /remote work/i.test(adjustment1) || /remote work/i.test(adjustment2) ||
+                   /remote/i.test(offsiteDuty) ||
+                   (/off site|offsite/i.test(detail) && /remote/i.test(reqReason));
+  // True off-site = a duty outside the office that is NOT remote (client meeting, training, field, etc.)
+  const isOffsite = (!!offsiteDuty && !/remote/i.test(offsiteDuty)) ||
+                    /off site|offsite|off-site/i.test(detail);
+
+  const isSick        = /sick/i.test(status) || /sick/i.test(leaveType) || /sick/i.test(detail);
+  const isAnnualLeave = /annual leave/i.test(status) || /annual leave/i.test(leaveType) || /annual leave/i.test(detail);
+  const isAnyLeave    = isSick || isAnnualLeave || isLeaveDay || !!leaveType || /leave/i.test(detail);
+
+  const isLate           = isPresent && clockInMin !== null && clockInMin > lateThreshold;
+  const underTarget      = isPresent && workMin > 0 && workMin < targetMin;
   const isScheduledWorkday = !isWeeklyOff && !isHoliday;
 
   return {
-    empId: r['Employee Id'], empName: r['Employee Name'], division: r['Division'], dept,
-    designation: r['Current Designation'], manager: r['Direct Manager Name'] || 'Unassigned', hrbp: r['Hrbp Name'],
+    empId: empId ? String(empId).trim() : '',
+    empName: String(empName||'').trim(),
+    division: String(division||'').trim(),
+    dept,
+    designation: String(designation||'').trim(),
+    manager,
+    hrbp: String(hrbp||'').trim(),
     date, dow: date ? date.getDay() : null,
-    clockInMin, clockOutMin, workMin, stoMin, shift, isRamadan, targetMin,
+    clockInMin, clockOutMin, workMin, stoMin,
+    shift, policy, isRamadan, targetMin,
     status, detail, reqStatus, reqReason,
-    isWeeklyOff, isHoliday, isPresent, isSinglePunch, isAbsent, isWFH, isOffsite, isAdjustment, isRemote,
+    leaveType, offsiteDuty,
+    isWeeklyOff, isHoliday, isPresent, isSinglePunch, isAbsent,
+    isOffsite, isAdjustment, isRemote,
     isSick, isAnnualLeave, isAnyLeave, isLate, underTarget, isScheduledWorkday,
+    isSto, stoReason,
+  };
+}
+
+function normalizeLeavesRow(r) {
+  return {
+    empId:     String(pickField(r, ['Employee Id','Employee ID']) || '').trim(),
+    empName:   String(pickField(r, ['Employee Name','Full Name','Employee Full Name']) || '').trim(),
+    leaveType: String(pickField(r, ['Leave Type']) || '').trim(),
+    leaveFrom: parseDate(pickField(r, ['Leave From Date','From Date','Start Date'])),
+    leaveTo:   parseDate(pickField(r, ['Leave To Date','To Date','End Date'])),
+    calendarDays: Number(pickField(r, ['Calendar Days']) || 0),
+    workingDays:  Number(pickField(r, ['Working Days']) || 0),
+    halfDay:   String(pickField(r, ['Full-Day/Half-Day','Full Day Half Day','Day Type']) || '').trim(),
+    halfPart:  String(pickField(r, ['First/Second Half','Half']) || '').trim(),
+    status:    String(pickField(r, ['Status','Request Status']) || '').trim(),
+    leaveCode: String(pickField(r, ['Leave Code']) || '').trim(),
+    approvalDate: parseDate(pickField(r, ['Approval Date'])),
+    division:  String(pickField(r, ['Division','Division Name']) || '').trim(),
+    dept:      String(pickField(r, ['Department','Department Name','Dept']) || '').trim(),
+  };
+}
+
+function normalizeOffsiteRow(r) {
+  return {
+    empId:    String(pickField(r, ['Employee Id','Employee ID']) || '').trim(),
+    empName:  String(pickField(r, ['Employee Full Name','Employee Name','Full Name']) || '').trim(),
+    requestDate: parseDate(pickField(r, ['Date Of Request','Request Date'])),
+    clockInMin:  parseTimeToMin(pickField(r, ['Out Duty Clock In Time','Clock In'])),
+    clockOutMin: parseTimeToMin(pickField(r, ['Out Duty Clock Out Time','Clock Out'])),
+    reason:   String(pickField(r, ['Reason','Off Site Reason','Offsite Reason']) || '').trim(),
+    status:   String(pickField(r, ['Request Status','Status']) || '').trim(),
+    fromDate: parseDate(pickField(r, ['Requested For Date','From Date'])),
+    toDate:   parseDate(pickField(r, ['Requested To Date','To Date'])),
+    division: String(pickField(r, ['Division','Division Name']) || '').trim(),
+    dept:     String(pickField(r, ['Department','Department Name','Dept']) || '').trim(),
+  };
+}
+
+function normalizeShortLeaveRow(r) {
+  return {
+    empId:    String(pickField(r, ['Employee Id','Employee ID']) || '').trim(),
+    empName:  String(pickField(r, ['Employee Name','Employee Full Name','Full Name']) || '').trim(),
+    date:     parseDate(pickField(r, ['Date','Requested For Date','From Date','Approval Date'])),
+    duration: parseDurationToMin(pickField(r, ['Duration','Hours','Short Leave Duration'])),
+    reason:   String(pickField(r, ['Reason']) || '').trim(),
+    status:   String(pickField(r, ['Request Status','Status']) || '').trim(),
+    approvalDate: parseDate(pickField(r, ['Approval Date'])),
+    division: String(pickField(r, ['Division','Division Name']) || '').trim(),
+    dept:     String(pickField(r, ['Department','Department Name','Dept']) || '').trim(),
   };
 }
 // Normalize a column header for fuzzy comparison: lowercase, strip whitespace/punctuation
@@ -1284,7 +1413,8 @@ function detectSnapshotDate(fileName) {
   return null;
 }
 
-function ingestParsedRows(rows, fields, fileName) {
+function ingestParsedRows(rows, fields, fileName, opts) {
+  const silentUnknown = opts && opts.silentUnknown;
   const kind = detectFileKind(fields);
   if (kind === 'attendance') {
     const norm = rows.map(normalizeAttendanceRow).filter(r => r.empId && r.date);
@@ -1298,9 +1428,25 @@ function ingestParsedRows(rows, fields, fileName) {
     State.masterMeta.snapshotDate = snapshotDate;
     State.masterMeta.fileName = fileName;
     State.loadedFiles.push({ name: fileName, kind: 'master', count: norm.length, snapshotDate });
+  } else if (kind === 'leaves') {
+    const norm = rows.map(normalizeLeavesRow).filter(r => r.empId);
+    State.leaves = State.leaves.concat(norm);
+    State.loadedFiles.push({ name: fileName, kind: 'leaves', count: norm.length });
+  } else if (kind === 'offsite') {
+    const norm = rows.map(normalizeOffsiteRow).filter(r => r.empId);
+    State.offsite = State.offsite.concat(norm);
+    State.loadedFiles.push({ name: fileName, kind: 'offsite', count: norm.length });
+  } else if (kind === 'shortleave') {
+    const norm = rows.map(normalizeShortLeaveRow).filter(r => r.empId);
+    State.shortLeaves = State.shortLeaves.concat(norm);
+    State.loadedFiles.push({ name: fileName, kind: 'shortleave', count: norm.length });
   } else {
     State.loadedFiles.push({ name: fileName, kind: 'unknown', count: 0 });
-    alert(`Could not detect file type for "${fileName}". Expected the Attendance Report or the Employee Master file.`);
+    if (!silentUnknown) {
+      alert(`Could not detect sheet type for "${fileName}". Expected an Attendance / Master / Leaves / Offsite / Short Leave sheet.`);
+    } else {
+      console.warn(`[hr-dashboard] Skipped sheet "${fileName}" — unrecognized columns.`);
+    }
   }
 }
 function loadCsvFile(file) {
@@ -1321,21 +1467,38 @@ function loadXlsxFile(file) {
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target.result);
-        const wb = XLSX.read(data, { type: 'array', cellDates: true });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true });
-        if (!rawRows.length) {
-          alert(`No data found in ${file.name}.`);
-          return resolve();
-        }
-        // Trim header keys
-        const rows = rawRows.map(r => {
-          const out = {};
-          for (const k of Object.keys(r)) out[String(k).trim()] = r[k];
-          return out;
+        // Performance flags for large workbooks.
+        // cellDates:false — keep time cells as numeric fractions (0.378 for 9:05) so our
+        // parseTimeToMin / parseDurationToMin handle them directly. Real date columns come
+        // through as Excel serials, which parseDate converts to a JS Date.
+        const wb = XLSX.read(data, {
+          type: 'array',
+          cellDates: false,
+          cellNF: false,
+          cellHTML: false,
+          cellFormula: false,
+          cellStyles: false,
         });
-        const fields = Object.keys(rows[0]);
-        ingestParsedRows(rows, fields, file.name);
+        const multipleSheets = wb.SheetNames.length > 1;
+        let anyIngested = false;
+        for (const sheetName of wb.SheetNames) {
+          const sheet = wb.Sheets[sheetName];
+          if (!sheet) continue;
+          const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true });
+          if (!rawRows.length) continue;
+          const rows = rawRows.map(r => {
+            const out = {};
+            for (const k of Object.keys(r)) out[String(k).trim()] = r[k];
+            return out;
+          });
+          const fields = Object.keys(rows[0]);
+          // For multi-sheet workbooks, suppress alerts for unrecognized sheets
+          // (cover pages, summaries, etc. are common); they'll be logged to console instead.
+          const sheetLabel = multipleSheets ? `${file.name} · ${sheetName}` : file.name;
+          ingestParsedRows(rows, fields, sheetLabel, { silentUnknown: multipleSheets });
+          anyIngested = true;
+        }
+        if (!anyIngested) alert(`No data found in ${file.name}.`);
       } catch (err) {
         alert(`Failed to parse ${file.name}: ${err.message}`);
       }
@@ -1351,7 +1514,30 @@ function loadFile(file) {
   return loadCsvFile(file);
 }
 async function handleFiles(fileList) {
-  for (const f of Array.from(fileList)) await loadFile(f);
+  const files = Array.from(fileList);
+  const uploadBtn = document.getElementById('uploadBtn');
+  const dropZone  = document.getElementById('dropZone');
+  const originalBtnText = uploadBtn.textContent;
+  // Show loading state — large xlsx parsing can block for several seconds.
+  uploadBtn.disabled = true;
+  uploadBtn.textContent = 'Parsing…';
+  if (dropZone) dropZone.style.pointerEvents = 'none';
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      uploadBtn.textContent = files.length > 1
+        ? `Parsing ${i+1}/${files.length}: ${f.name.slice(0, 24)}${f.name.length > 24 ? '…' : ''}`
+        : `Parsing ${f.name.slice(0, 28)}${f.name.length > 28 ? '…' : ''}`;
+      // yield to the browser so the new label paints before SheetJS blocks the thread
+      await new Promise(r => setTimeout(r, 0));
+      await loadFile(f);
+    }
+  } finally {
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = originalBtnText;
+    if (dropZone) dropZone.style.pointerEvents = '';
+  }
+
   const anyData = State.rawAttendance.length > 0 || State.master.length > 0;
   if (anyData) {
     document.getElementById('emptyState').style.display = 'none';
@@ -1377,6 +1563,8 @@ function renderLoadedFiles() {
   el.querySelectorAll('.x').forEach(x => x.addEventListener('click', (e) => {
     const i = +e.target.dataset.i;
     const removed = State.loadedFiles.splice(i, 1)[0];
+    // For each kind, drop everything of that kind. We can't surgically remove just one file's
+    // rows without tracking provenance per row, so removing one master file removes all master data, etc.
     if (removed.kind === 'attendance') {
       State.rawAttendance = [];
       State.loadedFiles = State.loadedFiles.filter(f => f.kind !== 'attendance');
@@ -1384,8 +1572,18 @@ function renderLoadedFiles() {
       State.master = [];
       State.masterMeta = null;
       State.loadedFiles = State.loadedFiles.filter(f => f.kind !== 'master');
+    } else if (removed.kind === 'leaves') {
+      State.leaves = [];
+      State.loadedFiles = State.loadedFiles.filter(f => f.kind !== 'leaves');
+    } else if (removed.kind === 'offsite') {
+      State.offsite = [];
+      State.loadedFiles = State.loadedFiles.filter(f => f.kind !== 'offsite');
+    } else if (removed.kind === 'shortleave') {
+      State.shortLeaves = [];
+      State.loadedFiles = State.loadedFiles.filter(f => f.kind !== 'shortleave');
     }
-    if (State.rawAttendance.length === 0) {
+    const anyData = State.rawAttendance.length > 0 || State.master.length > 0;
+    if (!anyData) {
       document.getElementById('emptyState').style.display = '';
       document.getElementById('filterBar').style.display = 'none';
       document.getElementById('clearBtn').classList.add('hidden');
@@ -1399,7 +1597,8 @@ function renderLoadedFiles() {
   }));
 }
 function clearAll() {
-  State.rawAttendance = []; State.master = []; State.loadedFiles = []; State.masterMeta = null;
+  State.rawAttendance = []; State.master = []; State.leaves = []; State.offsite = []; State.shortLeaves = [];
+  State.loadedFiles = []; State.masterMeta = null;
   State.filters = { dept: 'all', employee: 'all', from: null, to: null };
   Object.values(State.charts).forEach(c => c.destroy()); State.charts = {};
   document.getElementById('emptyState').style.display = '';
@@ -1490,7 +1689,6 @@ function kpiCard({label, value, sub, tone}) {
 /* ---------- Section 1: Executive ---------- */
 function renderExec(rows) {
   const empIds = new Set(rows.map(r => r.empId));
-  const headcount = empIds.size;
   const scheduled = rows.filter(r => r.isScheduledWorkday);
   const presentDays = scheduled.filter(r => r.isPresent).length;
   const attendancePct = scheduled.length ? (presentDays/scheduled.length)*100 : 0;
@@ -1498,33 +1696,45 @@ function renderExec(rows) {
   const avgWorkMin = presentRows.length ? presentRows.reduce((s,r)=>s+r.workMin,0)/presentRows.length : 0;
   const remoteDays = rows.filter(r => r.isRemote).length;
   const offsiteDays = rows.filter(r => r.isOffsite).length;
-  const stoUses = rows.filter(r => r.stoMin > 0).length;
+  const stoUses = rows.filter(r => r.stoMin > 0 || r.isSto).length;
   const stoTotalMin = rows.reduce((s,r) => s+(r.stoMin||0), 0);
   const sickDays = rows.filter(r => r.isSick).length;
   const annualDays = rows.filter(r => r.isAnnualLeave).length;
   const under9Days = rows.filter(r => r.underTarget).length;
   const lateCount = rows.filter(r => r.isLate).length;
+  const lateEmployees = new Set(rows.filter(r => r.isLate).map(r => r.empId)).size;
   const singlePunch = rows.filter(r => r.isSinglePunch).length;
 
+  // Total Headcount + Male / Female come from the master file when it's loaded;
+  // we fall back to "unique in attendance" only when there's no master yet.
+  let totalHC = empIds.size;
+  let totalHCSub = 'unique in attendance';
+  let male = 0, female = 0, haveGender = false;
+  if (State.master.length) {
+    const asOf = State.filters.to || new Date();
+    let mEmps = State.master.filter(m => m.doj && m.doj <= asOf);
+    if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
+    if (State.filters.employee !== 'all') mEmps = mEmps.filter(m => String(m.empId) === String(State.filters.employee));
+    totalHC = mEmps.length;
+    totalHCSub = `active as of ${toInputDate(asOf)}`;
+    male   = mEmps.filter(m => isMale(m.gender)).length;
+    female = mEmps.filter(m => isFemale(m.gender)).length;
+    haveGender = true;
+  }
+
   const kpis = [];
-  kpis.push(kpiCard({label:'Total Headcount', value: fmtNum(headcount), sub: 'unique in range'}));
+  kpis.push(kpiCard({label:'Total Headcount', value: fmtNum(totalHC), sub: totalHCSub}));
   kpis.push(kpiCard({label:'Avg Attendance', value: fmtPct(attendancePct), sub: `${presentDays} / ${scheduled.length} scheduled`, tone: attendancePct>=95?'success': attendancePct>=85?'':'warning'}));
   kpis.push(kpiCard({label:'Avg Working Hours', value: fmtHrs(avgWorkMin), sub: 'across present days'}));
-  kpis.push(kpiCard({label:'Late Arrivals', value: fmtNum(lateCount), sub: 'clock-in after 09:00', tone: lateCount>0?'warning':''}));
+  kpis.push(kpiCard({label:'Late Arrivals', value: fmtNum(lateCount), sub: `${lateEmployees} employee${lateEmployees===1?'':'s'} · after 09:00`, tone: lateCount>0?'warning':''}));
   kpis.push(kpiCard({label:'< 9 Hr Days', value: fmtNum(under9Days), sub: 'below target', tone: under9Days>0?'warning':''}));
   kpis.push(kpiCard({label:'Single Punch', value: fmtNum(singlePunch), sub: 'absent / incomplete', tone: singlePunch>0?'warning':''}));
   kpis.push(kpiCard({label:'Remote Days', value: fmtNum(remoteDays), sub: 'WFH + remote off-site'}));
   kpis.push(kpiCard({label:'Off-Site Days', value: fmtNum(offsiteDays), sub: 'all off-site duty'}));
-  kpis.push(kpiCard({label:'Short Time Off', value: fmtNum(stoUses), sub: fmtMinAsHrs(stoTotalMin)+' total'}));
+  kpis.push(kpiCard({label:'Short Time Off', value: fmtNum(stoUses), sub: stoTotalMin > 0 ? fmtMinAsHrs(stoTotalMin)+' total' : 'uses in range'}));
   kpis.push(kpiCard({label:'Sick Leave', value: fmtNum(sickDays), sub: 'days in range', tone: sickDays>0?'warning':''}));
   kpis.push(kpiCard({label:'Annual Leave', value: fmtNum(annualDays), sub: 'days in range'}));
-  if (State.master.length) {
-    const masterById = new Map(State.master.map(m => [String(m.empId), m]));
-    let male=0, female=0;
-    empIds.forEach(id => {
-      const m = masterById.get(String(id));
-      if (m) { if (/female/i.test(m.gender)) female++; else if (/male/i.test(m.gender)) male++; }
-    });
+  if (haveGender) {
     kpis.push(kpiCard({label:'Male / Female', value: `${male} / ${female}`, sub: 'from master file'}));
   } else {
     kpis.push(kpiCard({label:'Attendance Adj.', value: fmtNum(rows.filter(r=>r.isAdjustment).length), sub: 'requests in range'}));
@@ -1568,7 +1778,7 @@ function renderExec(rows) {
     const dunder = drows.filter(r => r.underTarget).length;
     const drem = drows.filter(r => r.isRemote).length;
     const doff = drows.filter(r => r.isOffsite).length;
-    const dsto = drows.filter(r => r.stoMin > 0).length;
+    const dsto = drows.filter(r => r.stoMin > 0 || r.isSto).length;
     const dsick = drows.filter(r => r.isSick).length;
     const dabs = drows.filter(r => (r.isAbsent || r.isSinglePunch) && !r.isWeeklyOff && !r.isHoliday).length;
     const headcountD = new Set(drows.map(r=>r.empId)).size;
@@ -1773,15 +1983,16 @@ function renderAttendance(rows) {
   const under9 = rows.filter(r => r.underTarget).length;
   const remote = rows.filter(r => r.isRemote).length;
   const offsite = rows.filter(r => r.isOffsite).length;
-  const sto = rows.filter(r => r.stoMin > 0).length;
+  const sto = rows.filter(r => r.stoMin > 0 || r.isSto).length;
   const presentWithHrs = present.filter(r => r.workMin > 0);
   const avgHrs = presentWithHrs.length ? presentWithHrs.reduce((s,r)=>s+r.workMin,0)/presentWithHrs.length : 0;
   const adjust = rows.filter(r => r.isAdjustment).length;
+  const lateEmployees = new Set(rows.filter(r => r.isLate).map(r => r.empId)).size;
 
   document.getElementById('attendanceKpis').innerHTML = [
     kpiCard({label:'Attendance %', value: fmtPct(att), tone: att>=95?'success':att>=85?'':'warning'}),
     kpiCard({label:'Avg Working Hours', value: fmtHrs(avgHrs)}),
-    kpiCard({label:'Late Arrivals', value: fmtNum(lateDays), sub:'clock-in after 09:00'}),
+    kpiCard({label:'Late Arrivals', value: fmtNum(lateDays), sub: `${lateEmployees} employee${lateEmployees===1?'':'s'} · after 09:00`}),
     kpiCard({label:'< 9 Hr Days', value: fmtNum(under9), tone: under9>0?'warning':''}),
     kpiCard({label:'Remote Days', value: fmtNum(remote)}),
     kpiCard({label:'Off-Site Days', value: fmtNum(offsite)}),
@@ -1815,9 +2026,9 @@ function renderAttendance(rows) {
   });
   drawBar('chartClockInDist', inBins, inCounts, 'Days');
 
-  drawBar('chartStoByDept', deptNames, deptNames.map(d => byDept[d].filter(r=>r.stoMin>0).length), 'STO uses', { color: COLORS.cyan });
+  drawBar('chartStoByDept', deptNames, deptNames.map(d => byDept[d].filter(r=>r.stoMin>0||r.isSto).length), 'STO uses', { color: COLORS.cyan });
   const dowCounts = [0,0,0,0,0,0,0];
-  rows.filter(r => r.stoMin > 0).forEach(r => { dowCounts[r.dow]++; });
+  rows.filter(r => r.stoMin > 0 || r.isSto).forEach(r => { dowCounts[r.dow]++; });
   drawBar('chartStoByDow', DOW, dowCounts, 'STO uses', { color: COLORS.cyan });
 }
 
@@ -1906,7 +2117,7 @@ function renderBehavior(rows) {
     if (r.underTarget) e.under9++;
     if (r.isRemote) e.remote++;
     if (r.isOffsite) e.offsite++;
-    if (r.stoMin > 0) { e.sto++; e.stoMin += r.stoMin; }
+    if (r.stoMin > 0 || r.isSto) { e.sto++; e.stoMin += (r.stoMin||0); }
     if (r.isSick) e.sick++;
     if (r.isAnnualLeave) e.annual++;
     if (r.isAdjustment) {
