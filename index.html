@@ -802,6 +802,33 @@
             </div>
           </div>
 
+          <div class="section-block" id="wfLeaversSection">
+            <h3 class="section-heading">Leavers &amp; Turnover</h3>
+            <div class="kpi-grid" id="leaverKpis" style="margin-bottom: 14px;"></div>
+            <div class="chart-grid cols-2">
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Leavers by month</div><div class="card-subtitle">Based on exit date in the master report</div></div></div>
+                <div class="chart-wrap"><canvas id="chartLeaversByMonth"></canvas></div>
+              </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Leavers by reason</div></div></div>
+                <div class="chart-wrap"><canvas id="chartLeaversByReason"></canvas></div>
+              </div>
+            </div>
+            <div class="card flush" style="margin-top: 16px;">
+              <div class="card-head-block">
+                <div class="card-title">Recent leavers</div>
+                <div class="card-subtitle">Within the selected date range</div>
+              </div>
+              <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 360px;">
+                <table class="data" id="leaversTable">
+                  <thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th class="num">Exit Date</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
           <div class="section-block">
             <h3 class="section-heading">Org health</h3>
             <div class="chart-grid cols-2">
@@ -821,10 +848,6 @@
                 <div class="card-header"><div><div class="card-title">Structure metrics</div></div></div>
                 <div id="orgMetrics"></div>
                 <div style="font-size:12px; color:var(--text-muted); margin-top:18px; padding-top:14px; border-top:1px solid var(--border); line-height: 1.5;">
-                  <strong style="color:var(--text); font-weight:600;">Leavers, Turnover &amp; Exit Type</strong><br/>
-                  Not derivable from the Employee Master alone — requires a separate leavers file (exit date + reason).
-                </div>
-                <div style="font-size:12px; color:var(--text-muted); margin-top:12px; line-height: 1.5;">
                   <strong style="color:var(--text); font-weight:600;">Open positions vs Filled</strong><br/>
                   Requires a recruitment / vacancies report (job openings with status).
                 </div>
@@ -1342,6 +1365,9 @@ function normalizeMasterRow(r) {
   const email       = pickField(r, ['Official Email Id', 'Email', 'Email Id', 'Email Address', 'Work Email']);
   const gender      = pickField(r, ['Gender', 'Sex']);
   const mobile      = pickField(r, ['Mobile Number', 'Mobile', 'Phone Number', 'Phone']);
+  // Leavers (when present in master) — empty for active employees, filled for ex-employees
+  const leaverDate   = parseDate(pickField(r, ['Leavers Date', 'Leaver Date', 'Leaving Date', 'Date Of Leaving', 'Date of Leaving', 'Exit Date', 'Termination Date', 'Last Working Day']));
+  const leaverReason = String(pickField(r, ['Leavers Reason', 'Leaver Reason', 'Reason for Leaving', 'Reason For Leaving', 'Exit Reason', 'Termination Reason', 'Leaving Reason']) || '').trim();
   return {
     empId:        id ? String(id).trim() : '',
     fullName:     fullName ? String(fullName).trim() : '',
@@ -1356,6 +1382,8 @@ function normalizeMasterRow(r) {
     nationality:  String(natRaw || '').trim(),
     mobile:       String(mobile || '').trim(),
     doj,
+    leaverDate,
+    leaverReason,
   };
 }
 const MONTH_NAMES = {
@@ -1712,7 +1740,8 @@ function renderExec(rows) {
   let male = 0, female = 0, haveGender = false;
   if (State.master.length) {
     const asOf = State.filters.to || new Date();
-    let mEmps = State.master.filter(m => m.doj && m.doj <= asOf);
+    // Active = joined by asOf AND (not yet left OR left after asOf)
+    let mEmps = State.master.filter(m => m.doj && m.doj <= asOf && (!m.leaverDate || m.leaverDate > asOf));
     if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
     if (State.filters.employee !== 'all') mEmps = mEmps.filter(m => String(m.empId) === String(State.filters.employee));
     totalHC = mEmps.length;
@@ -1799,14 +1828,17 @@ function renderExec(rows) {
 }
 
 /* ---------- Section 2: Workforce ---------- */
-const LEADERSHIP_RE = /director|vice president|^vp\b|\bvp\b|head|chief|svp|cro|ceo|cto|cfo|senior manager|associate director/i;
+// Leadership = Head, Associate Director, Director, Senior Director, VP, SVP, Chief
+// "Associate Director" and "Senior Director" both contain "Director" so the \bdirector\b
+// pattern matches all three. \b ensures we don't match substrings inside other words.
+const LEADERSHIP_RE = /\bdirector\b|\bhead\b|\bchief\b|\bvp\b|\bsvp\b|\bvice president\b/i;
 function isFemale(s) { return /female/i.test(s||''); }
 function isMale(s) { const v = String(s||''); return /male/i.test(v) && !/female/i.test(v); }
 
 function renderWorkforce(/* attendance rows — not used here */) {
   const emptyEl = document.getElementById('workforceEmpty');
   const contentEl = document.getElementById('workforceContent');
-  const workforceChartIds = ['chartHcByMonth','chartJoinersByMonth','chartWfDept','chartHcByLevel','chartWfDesignation','chartWfNationality','chartWfGender','chartLeadership','chartGenderByDept','chartFemaleTrend','chartWfTenure'];
+  const workforceChartIds = ['chartHcByMonth','chartJoinersByMonth','chartWfDept','chartHcByLevel','chartWfDesignation','chartWfNationality','chartWfGender','chartLeadership','chartGenderByDept','chartFemaleTrend','chartWfTenure','chartLeaversByMonth','chartLeaversByReason'];
 
   if (!State.master.length) {
     emptyEl.classList.remove('hidden');
@@ -1844,10 +1876,16 @@ function renderWorkforce(/* attendance rows — not used here */) {
     document.getElementById('workforceSnapshotSource').textContent = asOfSource;
   }
 
-  // Filter master employees by selected dept / employee / DOJ <= asOf
-  let mEmps = State.master.filter(m => m.doj && m.doj <= asOf);
+  // Active master employees by selected dept / employee / DOJ <= asOf, and not yet left as of asOf
+  let mEmps = State.master.filter(m => m.doj && m.doj <= asOf && (!m.leaverDate || m.leaverDate > asOf));
   if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
   if (State.filters.employee !== 'all') mEmps = mEmps.filter(m => String(m.empId) === String(State.filters.employee));
+
+  // Leavers within the selected date range (from → to). If no `from`, treat as "all-time before asOf".
+  const fromD = State.filters.from || new Date(1900, 0, 1);
+  let leavers = State.master.filter(m => m.leaverDate && m.leaverDate >= fromD && m.leaverDate <= asOf);
+  if (State.filters.dept !== 'all') leavers = leavers.filter(m => m.dept === State.filters.dept);
+  if (State.filters.employee !== 'all') leavers = leavers.filter(m => String(m.empId) === String(State.filters.employee));
 
   /* ---------- KPIs ---------- */
   const totalHC = mEmps.length;
@@ -1952,6 +1990,80 @@ function renderWorkforce(/* attendance rows — not used here */) {
   });
   drawBar('chartWfTenure', Object.keys(tenBands), Object.values(tenBands), 'Employees');
 
+  /* ---------- Leavers & Turnover ---------- */
+  const leaversSection = document.getElementById('wfLeaversSection');
+  // Only show this block if the master file actually has any leaver data at all
+  const masterHasLeavers = State.master.some(m => m.leaverDate);
+  if (!masterHasLeavers) {
+    if (leaversSection) leaversSection.style.display = 'none';
+    ['chartLeaversByMonth','chartLeaversByReason'].forEach(id => { if (State.charts[id]) { State.charts[id].destroy(); delete State.charts[id]; } });
+  } else {
+    if (leaversSection) leaversSection.style.display = '';
+
+    const totalLeavers = leavers.length;
+    // Avg tenure at exit (years)
+    const leaverTenures = leavers.filter(m => m.doj && m.leaverDate).map(m => (m.leaverDate - m.doj)/(1000*60*60*24*365));
+    const avgLeaverTenure = leaverTenures.length ? leaverTenures.reduce((s,v)=>s+v,0)/leaverTenures.length : 0;
+    // Turnover % = leavers in period / avg of (active at start, active at end)
+    const startActive = State.master.filter(m => m.doj && m.doj <= fromD && (!m.leaverDate || m.leaverDate > fromD)).length;
+    const endActive = mEmps.length;
+    const avgActive = (startActive + endActive) / 2 || 1;
+    const turnoverPct = (totalLeavers / avgActive) * 100;
+    // Top exit reason
+    const reasonCount = {};
+    leavers.forEach(m => { if (m.leaverReason) reasonCount[m.leaverReason] = (reasonCount[m.leaverReason]||0) + 1; });
+    const reasonEntries = Object.entries(reasonCount).sort((a,b)=>b[1]-a[1]);
+    const topReason = reasonEntries[0] ? reasonEntries[0][0] : '–';
+
+    document.getElementById('leaverKpis').innerHTML = [
+      kpiCard({label:'Leavers (in range)', value: fmtNum(totalLeavers), sub: totalLeavers ? `${reasonEntries.length} distinct reasons` : 'none in range', tone: totalLeavers>0?'warning':''}),
+      kpiCard({label:'Turnover %', value: fmtPct(turnoverPct), sub: `vs avg active ${Math.round(avgActive)}`, tone: turnoverPct>10?'danger':turnoverPct>5?'warning':''}),
+      kpiCard({label:'Avg Tenure at Exit', value: avgLeaverTenure.toFixed(1)+' yrs'}),
+      kpiCard({label:'Top Exit Reason', value: topReason.length > 24 ? topReason.slice(0,23)+'…' : topReason, sub: reasonEntries[0] ? `${reasonEntries[0][1]} occurrence${reasonEntries[0][1]===1?'':'s'}` : ''}),
+    ].join('');
+
+    // Leavers by month (within range)
+    if (totalLeavers > 0) {
+      const dates = leavers.map(m => m.leaverDate).sort((a,b)=>a-b);
+      const first = new Date(dates[0].getFullYear(), dates[0].getMonth(), 1);
+      const last  = new Date(asOf.getFullYear(),  asOf.getMonth(),  1);
+      const months = [];
+      const cur = new Date(first);
+      while (cur <= last) { months.push(new Date(cur)); cur.setMonth(cur.getMonth()+1); }
+      const monthLabels = months.map(d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'));
+      const leaversByMonth = months.map(ms => {
+        const next = new Date(ms.getFullYear(), ms.getMonth()+1, 1);
+        return leavers.filter(m => m.leaverDate >= ms && m.leaverDate < next).length;
+      });
+      drawBar('chartLeaversByMonth', monthLabels, leaversByMonth, 'Leavers', { color: COLORS.red });
+
+      // Leavers by reason (top 10)
+      const topReasons = reasonEntries.slice(0, 10);
+      drawBar('chartLeaversByReason', topReasons.map(r => r[0]), topReasons.map(r => r[1]), 'Leavers', { horizontal: true, color: COLORS.red });
+    } else {
+      ['chartLeaversByMonth','chartLeaversByReason'].forEach(id => { if (State.charts[id]) { State.charts[id].destroy(); delete State.charts[id]; } });
+    }
+
+    // Recent leavers table
+    const tableBody = document.querySelector('#leaversTable tbody');
+    if (totalLeavers === 0) {
+      tableBody.innerHTML = emptyRow(6);
+    } else {
+      const sorted = leavers.slice().sort((a,b) => b.leaverDate - a.leaverDate);
+      tableBody.innerHTML = sorted.map(m => {
+        const tenure = m.doj ? ((m.leaverDate - m.doj)/(1000*60*60*24*365)).toFixed(1)+'y' : '–';
+        return `<tr>
+          <td><strong>${escapeHtml(m.fullName)}</strong> <span class="pill muted">${escapeHtml(m.empId)}</span></td>
+          <td>${escapeHtml(m.dept || '–')}</td>
+          <td>${escapeHtml(m.designation || '–')}</td>
+          <td class="num">${fmtDate(m.leaverDate)}</td>
+          <td class="num">${tenure}</td>
+          <td>${escapeHtml(m.leaverReason || '–')}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
   /* ---------- Org structure ---------- */
   const byMgr = groupBy(mEmps, m => m.manager || 'Unassigned');
   const mgrEntries = Object.entries(byMgr).sort((a,b) => b[1].length - a[1].length);
@@ -2047,8 +2159,13 @@ function renderAbsence(rows) {
   const repeatSick = Object.entries(sickByEmp).filter(([,v]) => v.count >= 3);
 
   const totalAbs = rows.filter(r => (r.isAbsent || r.isSick || r.isSinglePunch) && !r.isWeeklyOff && !r.isHoliday);
-  const monFri = totalAbs.filter(r => r.dow === 1 || r.dow === 5).length;
-  const monFriPct = totalAbs.length ? monFri/totalAbs.length*100 : 0;
+  // Top weekday for absences — actionable: tells you which day people most often miss.
+  const dowCount = [0,0,0,0,0,0,0];
+  totalAbs.forEach(r => { if (r.dow !== null) dowCount[r.dow]++; });
+  let topDowIdx = 0, topDowVal = -1;
+  dowCount.forEach((v, i) => { if (v > topDowVal) { topDowIdx = i; topDowVal = v; } });
+  const topDayLabel = totalAbs.length > 0 ? ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][topDowIdx] : '–';
+  const topDaySub = totalAbs.length > 0 ? `${dowCount[topDowIdx]} of ${totalAbs.length} absences` : 'no absences in range';
 
   document.getElementById('absenceKpis').innerHTML = [
     kpiCard({label:'Sick Leave Days', value: fmtNum(sick), tone: sick>0?'warning':''}),
@@ -2056,7 +2173,7 @@ function renderAbsence(rows) {
     kpiCard({label:'Single Punch', value: fmtNum(single), tone: single>0?'warning':''}),
     kpiCard({label:'Unscheduled Absent', value: fmtNum(absent), tone: absent>0?'warning':''}),
     kpiCard({label:'Repeat Sick (3+)', value: fmtNum(repeatSick.length), tone: repeatSick.length>0?'warning':''}),
-    kpiCard({label:'Mon/Fri Absences', value: fmtPct(monFriPct), sub:`${monFri} of ${totalAbs.length}`}),
+    kpiCard({label:'Top Absence Day', value: topDayLabel, sub: topDaySub}),
   ].join('');
 
   drawBar('chartLeaveByType',
