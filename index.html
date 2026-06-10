@@ -919,7 +919,7 @@
       <section id="tab-absence" class="tab-content">
         <div class="section-block">
           <h3 class="section-heading">Absence KPIs</h3>
-          <div class="kpi-grid" id="absenceKpis"></div>
+          <div class="kpi-grid cols-4" id="absenceKpis"></div>
         </div>
 
         <div class="section-block">
@@ -930,7 +930,7 @@
               <div class="chart-wrap"><canvas id="chartLeaveByType"></canvas></div>
             </div>
             <div class="card">
-              <div class="card-header"><div><div class="card-title">Sick leave by department</div></div></div>
+              <div class="card-header"><div><div class="card-title">Sick leave by department</div><div class="card-subtitle">Occasional (1–2 days) vs Short (3+ days, DHA-attested)</div></div></div>
               <div class="chart-wrap"><canvas id="chartSickByDept"></canvas></div>
             </div>
             <div class="card">
@@ -948,12 +948,12 @@
           <h3 class="section-heading">Frequent absence patterns</h3>
           <div class="card flush">
             <div class="card-head-block">
-              <div class="card-title">Employees with 3+ sick leaves in selected range</div>
-              <div class="card-subtitle">Repeat absentees flagged for HRBP follow-up</div>
+              <div class="card-title">Employees with 3+ separate sick instances</div>
+              <div class="card-subtitle">A "sick instance" = one continuous stretch of sick days. Useful for HRBP follow-up on recurring callers-in.</div>
             </div>
             <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px;">
               <table class="data" id="frequentSickTable">
-                <thead><tr><th>Employee</th><th>Department</th><th class="num">Sick Days</th><th class="num">Last Occurrence</th></tr></thead>
+                <thead><tr><th>Employee</th><th>Department</th><th class="num">Instances (days)</th><th class="num">Last Occurrence</th></tr></thead>
                 <tbody></tbody>
               </table>
             </div>
@@ -1229,6 +1229,9 @@ function normalizeAttendanceRow(r) {
   const isPresent     = /present/i.test(status);
   const isSinglePunch = /single punch/i.test(status);
   const isLeaveDay    = /^\s*leave\s*$/i.test(status) || /,\s*leave\s*$/i.test(status);
+  // "Unscheduled absent" = explicit "Absent" status (or a non-leave/non-present day with no clock-in).
+  // Distinct from Single Punch so we don't double-count those in absence totals.
+  const isUnscheduledAbsent = /^absent$/i.test(status) || (!status && !isPresent && !isWeeklyOff && !isHoliday && !isLeaveDay && !isSinglePunch);
   const isAbsent      = !isPresent && !isWeeklyOff && !isHoliday && !isLeaveDay;
 
   // Adjustment: old schema flagged via Detailed Status. New schema: any of Adjustment 1/2 filled,
@@ -1271,7 +1274,47 @@ function normalizeAttendanceRow(r) {
     isOffsite, isAdjustment, isRemote,
     isSick, isAnnualLeave, isAnyLeave, isLate, underTarget, isScheduledWorkday,
     isSto, stoReason,
+    isUnscheduledAbsent,
+    // Filled by classifyAttendanceSickStreaks() after all attendance is loaded
+    isOccasionalSick: false,
+    isShortSick: false,
+    isFirstSickDay: false,
   };
+}
+
+// Classify sick rows into Occasional (1-2 day instance, no DHA note required) vs
+// Short (3+ consecutive day instance, requires attested DHA sick note).
+// Explicit leave-type wording wins; otherwise we infer from consecutive calendar days.
+// Also sets isFirstSickDay on the first day of each streak, so we can count "sick instances"
+// (separate visits) rather than just total sick days.
+function classifyAttendanceSickStreaks() {
+  const byEmp = {};
+  State.rawAttendance.forEach(r => {
+    r.isOccasionalSick = false;
+    r.isShortSick = false;
+    r.isFirstSickDay = false;
+    if (r.isSick) (byEmp[r.empId] = byEmp[r.empId] || []).push(r);
+  });
+  const DAY_MS = 86400000;
+  for (const empId of Object.keys(byEmp)) {
+    const empRows = byEmp[empId].sort((a,b) => a.date - b.date);
+    let i = 0;
+    while (i < empRows.length) {
+      let j = i;
+      while (j + 1 < empRows.length && (empRows[j+1].date - empRows[j].date) === DAY_MS) j++;
+      const streakLen = j - i + 1;
+      const streakIsShort = streakLen >= 3;
+      empRows[i].isFirstSickDay = true;
+      for (let k = i; k <= j; k++) {
+        const row = empRows[k];
+        if (/occasional/i.test(row.leaveType || '')) row.isOccasionalSick = true;
+        else if (/short sick|extended sick|continuous sick|long sick/i.test(row.leaveType || '')) row.isShortSick = true;
+        else if (streakIsShort) row.isShortSick = true;
+        else row.isOccasionalSick = true;
+      }
+      i = j + 1;
+    }
+  }
 }
 
 function normalizeLeavesRow(r) {
@@ -1573,6 +1616,7 @@ async function handleFiles(fileList) {
     document.getElementById('printBtn').classList.remove('hidden');
     if (State.rawAttendance.length > 0) {
       document.getElementById('filterBar').style.display = 'flex';
+      classifyAttendanceSickStreaks();
       initFilters();
     }
     renderAll();
@@ -2146,20 +2190,30 @@ function renderAttendance(rows) {
 
 /* ---------- Section 4: Absence ---------- */
 function renderAbsence(rows) {
-  const sick = rows.filter(r => r.isSick).length;
-  const annual = rows.filter(r => r.isAnnualLeave).length;
-  const single = rows.filter(r => r.isSinglePunch).length;
-  const absent = rows.filter(r => r.isAbsent && !r.isWeeklyOff && !r.isHoliday).length;
+  const occSick   = rows.filter(r => r.isOccasionalSick).length;
+  const shortSick = rows.filter(r => r.isShortSick).length;
+  const sickTotal = occSick + shortSick;
+  const annual    = rows.filter(r => r.isAnnualLeave).length;
+  // "Other Leave" = any leave row that isn't sick or annual (Accompaniment, Compassionate, etc.)
+  const otherLeave = rows.filter(r => r.isAnyLeave && !r.isSick && !r.isAnnualLeave).length;
+  const single    = rows.filter(r => r.isSinglePunch).length;
+  // Unscheduled absent: actual "Absent" status only — NOT single-punch (counted separately).
+  const absent    = rows.filter(r => r.isAbsent && !r.isSinglePunch && !r.isWeeklyOff && !r.isHoliday && !r.isAnyLeave).length;
 
+  // Per-employee sick instance count: a streak of consecutive sick days = 1 instance.
+  // (Uses isFirstSickDay set by classifyAttendanceSickStreaks.)
   const sickByEmp = {};
   rows.filter(r => r.isSick).forEach(r => {
-    if (!sickByEmp[r.empId]) sickByEmp[r.empId] = { name: r.empName, dept: r.dept, days: [], count: 0 };
-    sickByEmp[r.empId].count++; sickByEmp[r.empId].days.push(r.date);
+    if (!sickByEmp[r.empId]) sickByEmp[r.empId] = { name: r.empName, dept: r.dept, days: [], totalDays: 0, instances: 0 };
+    sickByEmp[r.empId].totalDays++;
+    sickByEmp[r.empId].days.push(r.date);
+    if (r.isFirstSickDay) sickByEmp[r.empId].instances++;
   });
-  const repeatSick = Object.entries(sickByEmp).filter(([,v]) => v.count >= 3);
+  // Repeat-sick = 3+ separate sick instances (not days)
+  const repeatSick = Object.entries(sickByEmp).filter(([,v]) => v.instances >= 3);
 
   const totalAbs = rows.filter(r => (r.isAbsent || r.isSick || r.isSinglePunch) && !r.isWeeklyOff && !r.isHoliday);
-  // Top weekday for absences — actionable: tells you which day people most often miss.
+  // Top weekday for absences — tells you which day people most often miss.
   const dowCount = [0,0,0,0,0,0,0];
   totalAbs.forEach(r => { if (r.dow !== null) dowCount[r.dow]++; });
   let topDowIdx = 0, topDowVal = -1;
@@ -2168,24 +2222,31 @@ function renderAbsence(rows) {
   const topDaySub = totalAbs.length > 0 ? `${dowCount[topDowIdx]} of ${totalAbs.length} absences` : 'no absences in range';
 
   document.getElementById('absenceKpis').innerHTML = [
-    kpiCard({label:'Sick Leave Days', value: fmtNum(sick), tone: sick>0?'warning':''}),
-    kpiCard({label:'Annual Leave Days', value: fmtNum(annual)}),
-    kpiCard({label:'Single Punch', value: fmtNum(single), tone: single>0?'warning':''}),
-    kpiCard({label:'Unscheduled Absent', value: fmtNum(absent), tone: absent>0?'warning':''}),
-    kpiCard({label:'Repeat Sick (3+)', value: fmtNum(repeatSick.length), tone: repeatSick.length>0?'warning':''}),
+    kpiCard({label:'Occasional Sick', value: fmtNum(occSick), sub:'1–2 day instances (no DHA note)', tone: occSick>0?'warning':''}),
+    kpiCard({label:'Short Sick (3+)', value: fmtNum(shortSick), sub:'3+ consecutive days (DHA note)', tone: shortSick>0?'danger':''}),
+    kpiCard({label:'Annual Leave', value: fmtNum(annual), sub:'days in range'}),
+    kpiCard({label:'Other Leave', value: fmtNum(otherLeave), sub:'Accompaniment, Compassionate, etc.'}),
+    kpiCard({label:'Single Punch', value: fmtNum(single), sub:'incomplete clock-out', tone: single>0?'warning':''}),
+    kpiCard({label:'Unscheduled Absent', value: fmtNum(absent), sub:'status = Absent', tone: absent>0?'warning':''}),
+    kpiCard({label:'Repeat Sick (3+ inst.)', value: fmtNum(repeatSick.length), sub:'separate sick visits', tone: repeatSick.length>0?'warning':''}),
     kpiCard({label:'Top Absence Day', value: topDayLabel, sub: topDaySub}),
   ].join('');
 
+  // Updated breakdown chart: split sick into Occasional/Short and add Other Leave.
   drawBar('chartLeaveByType',
-    ['Sick','Annual','Single Punch','Other Absent'],
-    [sick, annual, single, absent],
+    ['Occasional Sick','Short Sick','Annual','Other Leave','Single Punch','Unscheduled'],
+    [occSick, shortSick, annual, otherLeave, single, absent],
     'Days',
-    { colors: [COLORS.amber, COLORS.primary, COLORS.red, COLORS.slate] }
+    { colors: [COLORS.amber, COLORS.red, COLORS.primary, COLORS.violet, COLORS.cyan, COLORS.slate] }
   );
 
+  // Sick by department — stacked Occasional + Short
   const byDept = groupBy(rows, r => r.dept);
   const deptNames = Object.keys(byDept).sort();
-  drawBar('chartSickByDept', deptNames, deptNames.map(d => byDept[d].filter(r=>r.isSick).length), 'Sick days', { color: COLORS.amber });
+  drawStackedBar('chartSickByDept', deptNames, [
+    { label: 'Occasional', data: deptNames.map(d => byDept[d].filter(r => r.isOccasionalSick).length), color: COLORS.amber },
+    { label: 'Short',      data: deptNames.map(d => byDept[d].filter(r => r.isShortSick).length),      color: COLORS.red   },
+  ]);
 
   const dow = [0,0,0,0,0,0,0];
   totalAbs.forEach(r => dow[r.dow]++);
@@ -2195,23 +2256,27 @@ function renderAbsence(rows) {
   rows.forEach(r => {
     if (!r.date) return;
     const k = r.date.getFullYear() + '-' + String(r.date.getMonth()+1).padStart(2,'0');
-    if (!byMonth[k]) byMonth[k] = { sick:0, annual:0, absent:0 };
-    if (r.isSick) byMonth[k].sick++;
+    if (!byMonth[k]) byMonth[k] = { occ:0, short:0, annual:0, otherLeave:0, absent:0 };
+    if (r.isOccasionalSick) byMonth[k].occ++;
+    if (r.isShortSick) byMonth[k].short++;
     if (r.isAnnualLeave) byMonth[k].annual++;
-    if ((r.isAbsent || r.isSinglePunch) && !r.isSick && !r.isAnnualLeave && !r.isWeeklyOff && !r.isHoliday) byMonth[k].absent++;
+    if (r.isAnyLeave && !r.isSick && !r.isAnnualLeave) byMonth[k].otherLeave++;
+    if ((r.isAbsent || r.isSinglePunch) && !r.isSick && !r.isAnyLeave && !r.isWeeklyOff && !r.isHoliday) byMonth[k].absent++;
   });
   const months = Object.keys(byMonth).sort();
   drawLine('chartAbsenceTrend', months, [
-    { label:'Sick', data: months.map(m=>byMonth[m].sick), color: COLORS.amber },
-    { label:'Annual', data: months.map(m=>byMonth[m].annual), color: COLORS.primary },
-    { label:'Unscheduled', data: months.map(m=>byMonth[m].absent), color: COLORS.red },
+    { label:'Occasional Sick', data: months.map(m=>byMonth[m].occ),        color: COLORS.amber },
+    { label:'Short Sick',      data: months.map(m=>byMonth[m].short),      color: COLORS.red },
+    { label:'Annual',          data: months.map(m=>byMonth[m].annual),     color: COLORS.primary },
+    { label:'Other Leave',     data: months.map(m=>byMonth[m].otherLeave), color: COLORS.violet },
+    { label:'Unscheduled',     data: months.map(m=>byMonth[m].absent),     color: COLORS.slate },
   ]);
 
   const sickTbody = document.querySelector('#frequentSickTable tbody');
   if (repeatSick.length) {
-    sickTbody.innerHTML = repeatSick.sort((a,b)=>b[1].count-a[1].count).map(([id,v]) => {
+    sickTbody.innerHTML = repeatSick.sort((a,b)=>b[1].instances-a[1].instances).map(([id,v]) => {
       const lastD = v.days.sort((a,b)=>b-a)[0];
-      return `<tr><td><strong>${escapeHtml(v.name)}</strong> <span class="pill muted">${id}</span></td><td>${escapeHtml(v.dept)}</td><td class="num">${v.count}</td><td class="num">${fmtDate(lastD)}</td></tr>`;
+      return `<tr><td><strong>${escapeHtml(v.name)}</strong> <span class="pill muted">${id}</span></td><td>${escapeHtml(v.dept)}</td><td class="num">${v.instances} (${v.totalDays}d)</td><td class="num">${fmtDate(lastD)}</td></tr>`;
     }).join('');
   } else {
     sickTbody.innerHTML = emptyRow(4);
