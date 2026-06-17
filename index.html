@@ -187,6 +187,13 @@
   }
   .file-tag .x { cursor: pointer; opacity: 0.55; font-size: 13px; }
   .file-tag .x:hover { opacity: 1; }
+  .file-tag.unknown { background: #fef3c7; color: #92400e; }
+  .file-tag.attendance { background: #dbeafe; color: #1e40af; }
+  .file-tag.master { background: #dcfce7; color: #166534; }
+  .file-tag.leaves { background: #fce7f3; color: #9d174d; }
+  .file-tag.offsite { background: #ede9fe; color: #5b21b6; }
+  .file-tag.shortleave { background: #fef9c3; color: #854d0e; }
+  .file-tag .kind-label { font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; opacity: 0.8; }
 
   /* Filter bar */
   .filter-bar {
@@ -1155,19 +1162,21 @@ const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function detectFileKind(fields) {
   const f = (fields||[]).map(x => normalizeKey(x));
   const has = (...keys) => keys.some(k => f.includes(normalizeKey(k)));
-  // Master report
+  // Master report — multiple signals; any strong DOJ/DOB/Nationality column wins
   if (has('Date Of Joining','Date of Joining','Joining Date','DOJ','Hire Date') ||
-      has('Date Of Birth','Date of Birth','DOB','Nationality','Country')) return 'master';
+      has('Date Of Birth','Date of Birth','DOB') ||
+      (has('Nationality','Country') && has('Employee Id','Employee ID','EmpId','Full Name','Employee Name'))) return 'master';
   // Offsite Duty sheet
-  if (has('Out Duty Clock In Time','Out Duty Clock Out Time') ||
+  if (has('Out Duty Clock In Time','Out Duty Clock Out Time','Out Duty Reason') ||
       (has('Requested For Date','Requested To Date') && has('Reason'))) return 'offsite';
   // Leaves sheet (full leave records)
-  if (has('Leave From Date','Leave To Date') ||
-      (has('Leave Type') && has('Calendar Days','Working Days','Leave Code'))) return 'leaves';
-  // Daily Attendance — both old and new schemas
-  if (has('Clock In','Clock Out','Total Work Duration') && has('Status')) return 'attendance';
-  // Short Leave sheet (if columns suggest it)
-  if (has('Short Leave Duration') || (has('Approval Date') && has('Department') && !has('Leave Type'))) return 'shortleave';
+  if (has('Leave From Date','Leave To Date','Leave From','Leave To') ||
+      (has('Leave Type') && (has('Calendar Days','Working Days','Leave Code','Leave Days','Total Days')))) return 'leaves';
+  // Daily Attendance — clock-in + clock-out is the strong signal; status is nice-to-have
+  if (has('Clock In','Clock-In','Clockin','In Time') && has('Clock Out','Clock-Out','Clockout','Out Time')) return 'attendance';
+  // Short Leave sheet
+  if (has('Short Leave Duration','Short Leave') ||
+      (has('Approval Date') && has('Department') && !has('Leave Type'))) return 'shortleave';
   return 'unknown';
 }
 function normalizeAttendanceRow(r) {
@@ -1313,6 +1322,77 @@ function classifyAttendanceSickStreaks() {
         else row.isOccasionalSick = true;
       }
       i = j + 1;
+    }
+  }
+}
+
+// Cross-reference: when a dedicated Leaves sheet is uploaded alongside attendance,
+// trust its explicit leave classification over the attendance row's coarser Leave Type
+// or the streak heuristic. SSL (Short Sick Leave) and OSL (Occasional Sick Leave)
+// in the Leave Code column are authoritative.
+function enrichAttendanceFromLeaves() {
+  if (!State.leaves.length || !State.rawAttendance.length) return;
+
+  // Index attendance by empId for O(1) lookup per leave record
+  const attByEmp = {};
+  for (const a of State.rawAttendance) {
+    (attByEmp[String(a.empId)] = attByEmp[String(a.empId)] || []).push(a);
+  }
+
+  for (const leave of State.leaves) {
+    if (!leave.empId || !leave.leaveFrom) continue;
+    // Only count approved leaves (pending / rejected leaves shouldn't reclassify attendance)
+    if (leave.status && !/approved|approve/i.test(leave.status)) continue;
+
+    const rows = attByEmp[String(leave.empId)];
+    if (!rows) continue;
+
+    const fromTime = leave.leaveFrom.getTime();
+    const toTime   = (leave.leaveTo || leave.leaveFrom).getTime();
+    const lt   = leave.leaveType || '';
+    const code = leave.leaveCode || '';
+
+    const isShortSickType = /short\s*sick/i.test(lt) || /^ssl/i.test(code.replace(/[_\s]/g, ''));
+    const isOccSickType   = /occasional\s*sick/i.test(lt) || /^osl/i.test(code.replace(/[_\s]/g, ''));
+    const isGenericSick   = !isShortSickType && !isOccSickType && /sick/i.test(lt);
+    const isAnnualType    = /annual\s*leave/i.test(lt);
+
+    for (const att of rows) {
+      if (!att.date) continue;
+      const t = att.date.getTime();
+      if (t < fromTime || t > toTime) continue;
+
+      // Backfill leaveType on the attendance row if it was blank
+      if (!att.leaveType && lt) att.leaveType = lt;
+      att.leaveCodeFromLeaves = code || att.leaveCodeFromLeaves;
+
+      if (isShortSickType) {
+        att.isShortSick = true;
+        att.isOccasionalSick = false;
+        att.isSick = true;
+        att.isAnnualLeave = false;
+        att.isAnyLeave = true;
+      } else if (isOccSickType) {
+        att.isOccasionalSick = true;
+        att.isShortSick = false;
+        att.isSick = true;
+        att.isAnnualLeave = false;
+        att.isAnyLeave = true;
+      } else if (isGenericSick) {
+        att.isSick = true;
+        att.isAnnualLeave = false;
+        att.isAnyLeave = true;
+        // leave streak classifier's call on occ vs short
+      } else if (isAnnualType) {
+        att.isAnnualLeave = true;
+        att.isSick = false;
+        att.isOccasionalSick = false;
+        att.isShortSick = false;
+        att.isAnyLeave = true;
+      } else if (lt) {
+        // Any other leave (Accompaniment, Compassionate, Maternity, etc.)
+        att.isAnyLeave = true;
+      }
     }
   }
 }
@@ -1484,33 +1564,62 @@ function detectSnapshotDate(fileName) {
   return null;
 }
 
+// Build a stable per-row dedup key. Many workbooks ship the same data in both a
+// consolidated sheet and per-month sheets — without dedup we double-count everything.
+function dedupKey(kind, r) {
+  const t = (v) => (v instanceof Date && !isNaN(v)) ? v.getTime() : '';
+  switch (kind) {
+    case 'attendance': return `${r.empId}|${t(r.date)}`;
+    case 'master':     return `${r.empId}`;
+    case 'leaves':     return `${r.empId}|${t(r.leaveFrom)}|${t(r.leaveTo)}|${(r.leaveType||'').toLowerCase()}`;
+    case 'offsite':    return `${r.empId}|${t(r.fromDate)}|${t(r.toDate)}|${(r.reason||'').toLowerCase()}`;
+    case 'shortleave': return `${r.empId}|${t(r.date)}|${r.duration||0}`;
+    default:           return JSON.stringify(r);
+  }
+}
+function mergeUnique(existing, incoming, kind) {
+  const seen = new Set(existing.map(r => dedupKey(kind, r)));
+  let added = 0, skipped = 0;
+  for (const r of incoming) {
+    const k = dedupKey(kind, r);
+    if (seen.has(k)) { skipped++; continue; }
+    seen.add(k); existing.push(r); added++;
+  }
+  return { added, skipped };
+}
+
 function ingestParsedRows(rows, fields, fileName, opts) {
   const silentUnknown = opts && opts.silentUnknown;
   const kind = detectFileKind(fields);
   if (kind === 'attendance') {
     const norm = rows.map(normalizeAttendanceRow).filter(r => r.empId && r.date);
-    State.rawAttendance = State.rawAttendance.concat(norm);
-    State.loadedFiles.push({ name: fileName, kind: 'attendance', count: norm.length });
+    const { added, skipped } = mergeUnique(State.rawAttendance, norm, 'attendance');
+    if (skipped) console.info(`[hr-dashboard] "${fileName}": ${added} new attendance rows, ${skipped} duplicates skipped`);
+    State.loadedFiles.push({ name: fileName, kind: 'attendance', count: added, skipped });
   } else if (kind === 'master') {
     const norm = rows.map(normalizeMasterRow).filter(r => r.empId);
-    State.master = State.master.concat(norm);
+    const { added, skipped } = mergeUnique(State.master, norm, 'master');
+    if (skipped) console.info(`[hr-dashboard] "${fileName}": ${added} new master rows, ${skipped} duplicates skipped`);
     const snapshotDate = detectSnapshotDate(fileName);
     State.masterMeta = State.masterMeta || {};
     State.masterMeta.snapshotDate = snapshotDate;
     State.masterMeta.fileName = fileName;
-    State.loadedFiles.push({ name: fileName, kind: 'master', count: norm.length, snapshotDate });
+    State.loadedFiles.push({ name: fileName, kind: 'master', count: added, skipped, snapshotDate });
   } else if (kind === 'leaves') {
     const norm = rows.map(normalizeLeavesRow).filter(r => r.empId);
-    State.leaves = State.leaves.concat(norm);
-    State.loadedFiles.push({ name: fileName, kind: 'leaves', count: norm.length });
+    const { added, skipped } = mergeUnique(State.leaves, norm, 'leaves');
+    if (skipped) console.info(`[hr-dashboard] "${fileName}": ${added} new leave rows, ${skipped} duplicates skipped`);
+    State.loadedFiles.push({ name: fileName, kind: 'leaves', count: added, skipped });
   } else if (kind === 'offsite') {
     const norm = rows.map(normalizeOffsiteRow).filter(r => r.empId);
-    State.offsite = State.offsite.concat(norm);
-    State.loadedFiles.push({ name: fileName, kind: 'offsite', count: norm.length });
+    const { added, skipped } = mergeUnique(State.offsite, norm, 'offsite');
+    if (skipped) console.info(`[hr-dashboard] "${fileName}": ${added} new offsite rows, ${skipped} duplicates skipped`);
+    State.loadedFiles.push({ name: fileName, kind: 'offsite', count: added, skipped });
   } else if (kind === 'shortleave') {
     const norm = rows.map(normalizeShortLeaveRow).filter(r => r.empId);
-    State.shortLeaves = State.shortLeaves.concat(norm);
-    State.loadedFiles.push({ name: fileName, kind: 'shortleave', count: norm.length });
+    const { added, skipped } = mergeUnique(State.shortLeaves, norm, 'shortleave');
+    if (skipped) console.info(`[hr-dashboard] "${fileName}": ${added} new short-leave rows, ${skipped} duplicates skipped`);
+    State.loadedFiles.push({ name: fileName, kind: 'shortleave', count: added, skipped });
   } else {
     State.loadedFiles.push({ name: fileName, kind: 'unknown', count: 0 });
     if (!silentUnknown) {
@@ -1532,6 +1641,23 @@ function loadCsvFile(file) {
     });
   });
 }
+// Convert a SheetJS worksheet into [{col:val,...}] using the row at headerRowIdx as headers.
+// Returns [] if the worksheet doesn't have that many rows or the header row is empty.
+function rowsWithHeaderAt(sheet, headerRowIdx) {
+  const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true, blankrows: false });
+  if (aoa.length <= headerRowIdx) return [];
+  const headerRow = aoa[headerRowIdx];
+  if (!headerRow || !headerRow.some(c => String(c||'').trim() !== '')) return [];
+  const headers = headerRow.map(c => String(c||'').trim());
+  return aoa.slice(headerRowIdx + 1)
+    .filter(row => Array.isArray(row) && row.some(c => c !== '' && c != null))
+    .map(row => {
+      const obj = {};
+      headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+      return obj;
+    });
+}
+
 function loadXlsxFile(file) {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -1552,20 +1678,32 @@ function loadXlsxFile(file) {
         });
         const multipleSheets = wb.SheetNames.length > 1;
         let anyIngested = false;
+        const MAX_HEADER_OFFSET = 6;
         for (const sheetName of wb.SheetNames) {
           const sheet = wb.Sheets[sheetName];
           if (!sheet) continue;
-          const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true });
-          if (!rawRows.length) continue;
-          const rows = rawRows.map(r => {
-            const out = {};
-            for (const k of Object.keys(r)) out[String(k).trim()] = r[k];
-            return out;
-          });
-          const fields = Object.keys(rows[0]);
+
+          // Try header on row 0 first; if it doesn't match any known schema, sweep down
+          // a few rows looking for the real header (banner / title / blank-row layouts).
+          let rows = [], fields = [], kind = 'unknown';
+          for (let offset = 0; offset <= MAX_HEADER_OFFSET; offset++) {
+            const trial = rowsWithHeaderAt(sheet, offset);
+            if (!trial.length) continue;
+            const trialFields = Object.keys(trial[0]);
+            const trialKind = detectFileKind(trialFields);
+            // First parseable attempt becomes the default; we replace it if a later offset
+            // yields a recognized schema (so banner-on-row-0 layouts get rescued).
+            if (!rows.length) { rows = trial; fields = trialFields; kind = trialKind; }
+            if (trialKind !== 'unknown') { rows = trial; fields = trialFields; kind = trialKind; break; }
+          }
+          if (!rows.length) continue;
+
           // For multi-sheet workbooks, suppress alerts for unrecognized sheets
           // (cover pages, summaries, etc. are common); they'll be logged to console instead.
           const sheetLabel = multipleSheets ? `${file.name} · ${sheetName}` : file.name;
+          if (kind === 'unknown') {
+            console.warn(`[hr-dashboard] Skipped "${sheetLabel}" — unrecognized columns:`, fields);
+          }
           ingestParsedRows(rows, fields, sheetLabel, { silentUnknown: multipleSheets });
           anyIngested = true;
         }
@@ -1617,19 +1755,44 @@ async function handleFiles(fileList) {
     if (State.rawAttendance.length > 0) {
       document.getElementById('filterBar').style.display = 'flex';
       classifyAttendanceSickStreaks();
+      enrichAttendanceFromLeaves();
       initFilters();
     }
     renderAll();
+  } else if (State.loadedFiles.length > 0) {
+    // Upload completed but no sheet matched a known schema — tell the user explicitly.
+    const summary = State.loadedFiles.map(f => `  • ${f.name} → ${f.kind}${f.count ? ` (${f.count} rows)` : ''}`).join('\n');
+    alert(
+      `Loaded ${State.loadedFiles.length} sheet(s) but none matched the Attendance or Employee Master schema.\n\n` +
+      `Detected:\n${summary}\n\n` +
+      `The Attendance sheet needs columns: Employee Id, Date, Clock In, Clock Out, Total Work Duration, Status, Department.\n` +
+      `The Master sheet needs columns including: Employee Id, Full Name, Date Of Joining, Gender, Nationality.\n\n` +
+      `Check the browser console for the exact headers each unrecognized sheet had.`
+    );
   }
   renderLoadedFiles();
 }
 function renderLoadedFiles() {
   const el = document.getElementById('loadedFiles');
   el.innerHTML = '';
+  const KIND_LABEL = {
+    attendance:  'attendance',
+    master:      'master',
+    leaves:      'leaves',
+    offsite:     'offsite',
+    shortleave:  'short leave',
+    unknown:     'unknown',
+  };
   State.loadedFiles.forEach((f, i) => {
+    const label = KIND_LABEL[f.kind] || f.kind;
+    const kindClass = (f.kind || 'unknown').replace(/[^a-z]/gi, '').toLowerCase();
     const tag = document.createElement('span');
-    tag.className = 'file-tag';
-    tag.innerHTML = `${escapeHtml(f.name)} <span class="x" data-i="${i}" title="Remove">✕</span>`;
+    tag.className = 'file-tag ' + kindClass;
+    const countStr = f.count > 0 ? `<span style="opacity:0.65; font-weight:400;">· ${f.count}</span>` : '';
+    const dupStr = f.skipped > 0 ? `<span style="opacity:0.65; font-weight:400;" title="Duplicate rows skipped">· ${f.skipped} dup</span>` : '';
+    tag.innerHTML =
+      `<span class="kind-label">${escapeHtml(label)}</span>` +
+      ` ${escapeHtml(f.name)} ${countStr} ${dupStr} <span class="x" data-i="${i}" title="Remove">✕</span>`;
     el.appendChild(tag);
   });
   el.querySelectorAll('.x').forEach(x => x.addEventListener('click', (e) => {
