@@ -1314,12 +1314,13 @@ function classifyAttendanceSickStreaks() {
       const streakLen = j - i + 1;
       const streakIsShort = streakLen >= 3;
       empRows[i].isFirstSickDay = true;
+      // Streak length is authoritative: 3+ consecutive days = Short Sick (DHA-attested),
+      // 1-2 days = Occasional Sick. Leave-type wording is just a hint and can be wrong
+      // (e.g. a half-day SSL record); the actual day count wins.
       for (let k = i; k <= j; k++) {
         const row = empRows[k];
-        if (/occasional/i.test(row.leaveType || '')) row.isOccasionalSick = true;
-        else if (/short sick|extended sick|continuous sick|long sick/i.test(row.leaveType || '')) row.isShortSick = true;
-        else if (streakIsShort) row.isShortSick = true;
-        else row.isOccasionalSick = true;
+        if (streakIsShort) { row.isShortSick = true;  row.isOccasionalSick = false; }
+        else               { row.isShortSick = false; row.isOccasionalSick = true; }
       }
       i = j + 1;
     }
@@ -1366,23 +1367,13 @@ function enrichAttendanceFromLeaves() {
       if (!att.leaveType && lt) att.leaveType = lt;
       att.leaveCodeFromLeaves = code || att.leaveCodeFromLeaves;
 
-      if (isShortSickType) {
-        att.isShortSick = true;
-        att.isOccasionalSick = false;
+      // Just mark the day sick — classifyAttendanceSickStreaks() runs AFTER this
+      // and uses the actual consecutive-day count to decide occasional vs short.
+      // We deliberately don't pre-set isShortSick / isOccasionalSick here.
+      if (isShortSickType || isOccSickType || isGenericSick) {
         att.isSick = true;
         att.isAnnualLeave = false;
         att.isAnyLeave = true;
-      } else if (isOccSickType) {
-        att.isOccasionalSick = true;
-        att.isShortSick = false;
-        att.isSick = true;
-        att.isAnnualLeave = false;
-        att.isAnyLeave = true;
-      } else if (isGenericSick) {
-        att.isSick = true;
-        att.isAnnualLeave = false;
-        att.isAnyLeave = true;
-        // leave streak classifier's call on occ vs short
       } else if (isAnnualType) {
         att.isAnnualLeave = true;
         att.isSick = false;
@@ -1754,8 +1745,10 @@ async function handleFiles(fileList) {
     document.getElementById('printBtn').classList.remove('hidden');
     if (State.rawAttendance.length > 0) {
       document.getElementById('filterBar').style.display = 'flex';
-      classifyAttendanceSickStreaks();
+      // Enrich first so leaves-sheet sick days are present, THEN classify streaks
+      // on the fully-merged picture. (Reverse order would miss leave-driven sick days.)
       enrichAttendanceFromLeaves();
+      classifyAttendanceSickStreaks();
       initFilters();
     }
     renderAll();
@@ -2384,14 +2377,17 @@ function renderAbsence(rows) {
   const topDayLabel = totalAbs.length > 0 ? ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][topDowIdx] : '–';
   const topDaySub = totalAbs.length > 0 ? `${dowCount[topDowIdx]} of ${totalAbs.length} absences` : 'no absences in range';
 
+  // Count how many separate sick instances (streaks), and how many of those are 3+ day streaks.
+  const shortSickInstances = rows.filter(r => r.isFirstSickDay && r.isShortSick).length;
+  const occSickInstances   = rows.filter(r => r.isFirstSickDay && r.isOccasionalSick).length;
   document.getElementById('absenceKpis').innerHTML = [
-    kpiCard({label:'Occasional Sick', value: fmtNum(occSick), sub:'1–2 day instances (no DHA note)', tone: occSick>0?'warning':''}),
-    kpiCard({label:'Short Sick (3+)', value: fmtNum(shortSick), sub:'3+ consecutive days (DHA note)', tone: shortSick>0?'danger':''}),
+    kpiCard({label:'Occasional Sick Days', value: fmtNum(occSick), sub: `${occSickInstances} instance${occSickInstances===1?'':'s'} · 1–2 day stretches`, tone: occSick>0?'warning':''}),
+    kpiCard({label:'Short Sick Days', value: fmtNum(shortSick), sub: `${shortSickInstances} instance${shortSickInstances===1?'':'s'} · 3+ day stretches (DHA note)`, tone: shortSick>0?'danger':''}),
     kpiCard({label:'Annual Leave', value: fmtNum(annual), sub:'days in range'}),
     kpiCard({label:'Other Leave', value: fmtNum(otherLeave), sub:'Accompaniment, Compassionate, etc.'}),
     kpiCard({label:'Single Punch', value: fmtNum(single), sub:'incomplete clock-out', tone: single>0?'warning':''}),
     kpiCard({label:'Unscheduled Absent', value: fmtNum(absent), sub:'status = Absent', tone: absent>0?'warning':''}),
-    kpiCard({label:'Repeat Sick (3+ inst.)', value: fmtNum(repeatSick.length), sub:'separate sick visits', tone: repeatSick.length>0?'warning':''}),
+    kpiCard({label:'Employees w/ 3+ Sick Visits', value: fmtNum(repeatSick.length), sub:'3+ separate streaks', tone: repeatSick.length>0?'warning':''}),
     kpiCard({label:'Top Absence Day', value: topDayLabel, sub: topDaySub}),
   ].join('');
 
