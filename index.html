@@ -802,11 +802,69 @@
           </div>
 
           <div class="section-block">
-            <h3 class="section-heading">Tenure</h3>
-            <div class="card">
-              <div class="card-header"><div><div class="card-title">Tenure distribution</div><div class="card-subtitle">Years between date of joining and selected end date</div></div></div>
-              <div class="chart-wrap"><canvas id="chartWfTenure"></canvas></div>
+            <h3 class="section-heading">Life stage</h3>
+            <div class="kpi-grid" id="lifeStageKpis" style="margin-bottom: 14px;"></div>
+            <div class="chart-grid cols-2">
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Age group distribution</div><div class="card-subtitle">Based on date of birth in master report</div></div></div>
+                <div class="chart-wrap"><canvas id="chartAgeGroups"></canvas></div>
+              </div>
+              <div class="card flush">
+                <div class="card-head-block">
+                  <div class="card-title">Upcoming birthdays</div>
+                  <div class="card-subtitle">Next 30 days</div>
+                </div>
+                <div class="table-wrap scroll" style="border:none; border-radius:0 0 10px 10px; max-height:340px;">
+                  <table class="data" id="birthdaysTable">
+                    <thead><tr><th>Employee</th><th>Department</th><th class="num">Date</th><th class="num">Turning</th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
             </div>
+          </div>
+
+          <div class="section-block" id="probationSection">
+            <h3 class="section-heading">Probation</h3>
+            <div class="card flush">
+              <div class="card-head-block">
+                <div class="card-title">Employees currently on probation</div>
+                <div class="card-subtitle">Probation is 90 days from date of joining. Ordered by days remaining.</div>
+              </div>
+              <div class="table-wrap scroll" style="border:none; border-radius:0 0 10px 10px; max-height:360px;">
+                <table class="data" id="probationTable">
+                  <thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th class="num">Joined</th><th class="num">Ends</th><th class="num">Days Left</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h3 class="section-heading">Tenure</h3>
+            <div class="chart-grid cols-2">
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Tenure distribution</div><div class="card-subtitle">Years between date of joining and snapshot date</div></div></div>
+                <div class="chart-wrap"><canvas id="chartWfTenure"></canvas></div>
+              </div>
+              <div class="card flush">
+                <div class="card-head-block">
+                  <div class="card-title">Top 5 longest-serving employees</div>
+                  <div class="card-subtitle">Active as of snapshot date</div>
+                </div>
+                <div class="table-wrap" style="border:none; border-radius:0 0 10px 10px;">
+                  <table class="data" id="longestServingTable">
+                    <thead><tr><th>Employee</th><th>Department</th><th class="num">Joined</th><th class="num">Tenure</th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h3 class="section-heading">Diversity scorecard</h3>
+            <div class="kpi-grid" id="diversityScorecard"></div>
           </div>
 
           <div class="section-block" id="wfLeaversSection">
@@ -1612,10 +1670,13 @@ function ingestParsedRows(rows, fields, fileName, opts) {
     if (skipped) console.info(`[hr-dashboard] "${fileName}": ${added} new short-leave rows, ${skipped} duplicates skipped`);
     State.loadedFiles.push({ name: fileName, kind: 'shortleave', count: added, skipped });
   } else {
-    State.loadedFiles.push({ name: fileName, kind: 'unknown', count: 0 });
     if (!silentUnknown) {
+      // Single-file upload of an unrecognized file — surface it so the user knows why nothing rendered.
+      State.loadedFiles.push({ name: fileName, kind: 'unknown', count: 0 });
       alert(`Could not detect sheet type for "${fileName}". Expected an Attendance / Master / Leaves / Offsite / Short Leave sheet.`);
     } else {
+      // Multi-sheet workbook: cover pages / info tabs are common noise. Skip silently
+      // (still logged to console for debugging) instead of cluttering the file-tag row.
       console.warn(`[hr-dashboard] Skipped sheet "${fileName}" — unrecognized columns.`);
     }
   }
@@ -1939,7 +2000,12 @@ function renderExec(rows) {
   let totalHCSub = 'unique in attendance';
   let male = 0, female = 0, haveGender = false;
   if (State.master.length) {
-    const asOf = State.filters.to || new Date();
+    // Use the SAME asOf precedence as the Workforce tab: master snapshot date wins.
+    // Otherwise headcount here drifts from Workforce because "today" ≠ snapshot.
+    let asOf;
+    if (State.masterMeta && State.masterMeta.snapshotDate) asOf = State.masterMeta.snapshotDate;
+    else if (State.filters.to) asOf = State.filters.to;
+    else asOf = new Date();
     // Active = joined by asOf AND (not yet left OR left after asOf)
     let mEmps = State.master.filter(m => m.doj && m.doj <= asOf && (!m.leaverDate || m.leaverDate > asOf));
     if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
@@ -2038,7 +2104,7 @@ function isMale(s) { const v = String(s||''); return /male/i.test(v) && !/female
 function renderWorkforce(/* attendance rows — not used here */) {
   const emptyEl = document.getElementById('workforceEmpty');
   const contentEl = document.getElementById('workforceContent');
-  const workforceChartIds = ['chartHcByMonth','chartJoinersByMonth','chartWfDept','chartHcByLevel','chartWfDesignation','chartWfNationality','chartWfGender','chartLeadership','chartGenderByDept','chartFemaleTrend','chartWfTenure','chartLeaversByMonth','chartLeaversByReason'];
+  const workforceChartIds = ['chartHcByMonth','chartJoinersByMonth','chartWfDept','chartHcByLevel','chartWfDesignation','chartWfNationality','chartWfGender','chartLeadership','chartGenderByDept','chartFemaleTrend','chartWfTenure','chartLeaversByMonth','chartLeaversByReason','chartAgeGroups'];
 
   if (!State.master.length) {
     emptyEl.classList.remove('hidden');
@@ -2095,8 +2161,20 @@ function renderWorkforce(/* attendance rows — not used here */) {
   const female = mEmps.filter(m => isFemale(m.gender)).length;
   const femalePct = (male+female) ? female/(male+female)*100 : 0;
   const natSet = new Set(mEmps.map(m => m.nationality).filter(Boolean));
-  const tenures = mEmps.map(m => (asOf - m.doj)/(1000*60*60*24*365));
+  // Tenure and probation are always measured against the REAL current date (not the master
+  // snapshot). The snapshot only decides who is "active"; how long they've been here / how
+  // much probation is left is a live number.
+  const todayRef = new Date(); todayRef.setHours(0,0,0,0);
+  const tenures = mEmps.map(m => (todayRef - m.doj)/(1000*60*60*24*365));
   const avgTenure = tenures.length ? tenures.reduce((s,v)=>s+v,0)/tenures.length : 0;
+
+  // New joiners this month (relative to asOf)
+  const monthStart = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
+  const monthEnd = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0, 23, 59, 59, 999);
+  const newJoinersThisMonth = mEmps.filter(m => m.doj >= monthStart && m.doj <= monthEnd).length;
+  // Still on probation TODAY = joined less than 90 days ago from today
+  const probationCutoff = new Date(todayRef.getTime() - 90 * 86400000);
+  const underProbation = mEmps.filter(m => m.doj > probationCutoff).length;
 
   document.getElementById('workforceKpis').innerHTML = [
     kpiCard({label:'Total Headcount', value: fmtNum(totalHC), sub: `active as of ${toInputDate(asOf)}`}),
@@ -2105,6 +2183,8 @@ function renderWorkforce(/* attendance rows — not used here */) {
     kpiCard({label:'Female %', value: fmtPct(femalePct), sub: `${female} of ${male+female}`}),
     kpiCard({label:'Nationalities', value: fmtNum(natSet.size)}),
     kpiCard({label:'Avg Tenure', value: avgTenure.toFixed(1)+' yrs', sub: 'since joining'}),
+    kpiCard({label:'New Joiners (Month)', value: fmtNum(newJoinersThisMonth), sub: monthStart.toLocaleString('en',{month:'short',year:'numeric'})}),
+    kpiCard({label:'Under Probation', value: fmtNum(underProbation), sub: 'joined in last 90 days', tone: underProbation>0?'warning':''}),
   ].join('');
 
   /* ---------- Trends: HC by month + Joiners by month + Female trend ---------- */
@@ -2181,14 +2261,144 @@ function renderWorkforce(/* attendance rows — not used here */) {
     { label: 'Female', data: genderByDept.map(g => g.female), color: COLORS.pink },
   ]);
 
-  /* ---------- Tenure distribution ---------- */
-  const tenBands = { '<1y':0, '1-2y':0, '2-3y':0, '3-4y':0, '4-5y':0, '5y+':0 };
+  /* ---------- Life stage: age groups, avg age, birthdays ---------- */
+  const ages = mEmps.filter(m => m.dob).map(m => (todayRef - m.dob)/(1000*60*60*24*365.25));
+  const avgAge = ages.length ? ages.reduce((s,v)=>s+v,0)/ages.length : 0;
+  const ageBands = { '20-29':0, '30-39':0, '40-49':0, '50-59':0, '60+':0, 'Under 20':0 };
+  ages.forEach(a => {
+    if (a < 20) ageBands['Under 20']++;
+    else if (a < 30) ageBands['20-29']++;
+    else if (a < 40) ageBands['30-39']++;
+    else if (a < 50) ageBands['40-49']++;
+    else if (a < 60) ageBands['50-59']++;
+    else ageBands['60+']++;
+  });
+  // Only show "Under 20" band if it has anyone
+  if (ageBands['Under 20'] === 0) delete ageBands['Under 20'];
+
+  // Upcoming birthdays — compared against the REAL current date, not the master snapshot
+  // (a May snapshot shouldn't tell you "next birthday in X days" if it's actually July)
+  const today = new Date(); today.setHours(0,0,0,0);
+  const upcoming = mEmps.filter(m => m.dob).map(m => {
+    const bd = new Date(today.getFullYear(), m.dob.getMonth(), m.dob.getDate());
+    if (bd < today) bd.setFullYear(bd.getFullYear()+1);
+    const daysAway = Math.round((bd - today) / 86400000);
+    return { m, bd, daysAway, turning: bd.getFullYear() - m.dob.getFullYear() };
+  }).filter(x => x.daysAway <= 30).sort((a,b) => a.daysAway - b.daysAway);
+
+  document.getElementById('lifeStageKpis').innerHTML = [
+    kpiCard({label:'Average Age', value: avgAge > 0 ? avgAge.toFixed(1)+' yrs' : '–'}),
+    kpiCard({label:'Birthdays (30d)', value: fmtNum(upcoming.length), sub: upcoming.length ? `next: ${upcoming[0].m.fullName.split(' ')[0]} in ${upcoming[0].daysAway}d` : `as of ${toInputDate(today)}`}),
+  ].join('');
+
+  if (ages.length) {
+    drawBar('chartAgeGroups', Object.keys(ageBands), Object.values(ageBands), 'Employees',
+      { colors: Object.keys(ageBands).map((_,i) => COLORS.palette[i % COLORS.palette.length]) });
+  } else {
+    destroyIfExists('chartAgeGroups');
+  }
+
+  const bdayTbody = document.querySelector('#birthdaysTable tbody');
+  if (upcoming.length) {
+    bdayTbody.innerHTML = upcoming.map(u => {
+      const dayLabel = u.daysAway === 0 ? 'today' : u.daysAway === 1 ? 'tomorrow' : `in ${u.daysAway}d`;
+      return `<tr>
+        <td><strong>${escapeHtml(u.m.fullName)}</strong></td>
+        <td>${escapeHtml(u.m.dept || '–')}</td>
+        <td class="num">${u.bd.toLocaleString('en',{month:'short',day:'numeric'})} <span style="color:var(--text-muted);">· ${dayLabel}</span></td>
+        <td class="num">${u.turning}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    bdayTbody.innerHTML = emptyRow(4);
+  }
+
+  /* ---------- Tenure distribution (spec: <1, 1-2, 2-3, 3-4, 4+) ---------- */
+  const tenBands = { '<1 yr':0, '1-2':0, '2-3':0, '3-4':0, '4+':0 };
   mEmps.forEach(m => {
-    const y = (asOf - m.doj)/(1000*60*60*24*365);
-    if (y < 1) tenBands['<1y']++; else if (y < 2) tenBands['1-2y']++; else if (y < 3) tenBands['2-3y']++;
-    else if (y < 4) tenBands['3-4y']++; else if (y < 5) tenBands['4-5y']++; else tenBands['5y+']++;
+    const y = (todayRef - m.doj)/(1000*60*60*24*365);
+    if (y < 1) tenBands['<1 yr']++;
+    else if (y < 2) tenBands['1-2']++;
+    else if (y < 3) tenBands['2-3']++;
+    else if (y < 4) tenBands['3-4']++;
+    else tenBands['4+']++;
   });
   drawBar('chartWfTenure', Object.keys(tenBands), Object.values(tenBands), 'Employees');
+
+  /* ---------- Probation table ---------- */
+  // Days-left is a LIVE number — measured against today's real date, not the master snapshot.
+  // (If HR opens a May report in July, remaining probation should reflect that time has passed.)
+  const probEmps = mEmps
+    .filter(m => m.doj)
+    .map(m => {
+      const endDate = new Date(m.doj.getTime() + 90 * 86400000);
+      const daysLeft = Math.ceil((endDate - todayRef) / 86400000);
+      return { m, endDate, daysLeft };
+    })
+    .filter(x => x.daysLeft > 0)
+    .sort((a,b) => a.daysLeft - b.daysLeft);
+  const probTbody = document.querySelector('#probationTable tbody');
+  if (probEmps.length) {
+    probTbody.innerHTML = probEmps.map(x => {
+      const pill = x.daysLeft <= 14 ? 'danger' : x.daysLeft <= 30 ? 'warning' : 'muted';
+      return `<tr>
+        <td><strong>${escapeHtml(x.m.fullName)}</strong></td>
+        <td>${escapeHtml(x.m.dept || '–')}</td>
+        <td>${escapeHtml(x.m.designation || '–')}</td>
+        <td class="num">${fmtDate(x.m.doj)}</td>
+        <td class="num">${fmtDate(x.endDate)}</td>
+        <td class="num"><span class="pill ${pill}">${x.daysLeft} day${x.daysLeft===1?'':'s'}</span></td>
+      </tr>`;
+    }).join('');
+  } else {
+    probTbody.innerHTML = emptyRow(6);
+  }
+
+  /* ---------- Top 5 longest-serving ---------- */
+  const longest = mEmps.filter(m => m.doj).sort((a,b) => a.doj - b.doj).slice(0, 5);
+  const longestTbody = document.querySelector('#longestServingTable tbody');
+  if (longest.length) {
+    longestTbody.innerHTML = longest.map(m => {
+      const yrs = ((todayRef - m.doj)/(1000*60*60*24*365)).toFixed(1);
+      return `<tr>
+        <td><strong>${escapeHtml(m.fullName)}</strong></td>
+        <td>${escapeHtml(m.dept || '–')}</td>
+        <td class="num">${fmtDate(m.doj)}</td>
+        <td class="num">${yrs} yrs</td>
+      </tr>`;
+    }).join('');
+  } else {
+    longestTbody.innerHTML = emptyRow(4);
+  }
+
+  /* ---------- Diversity scorecard ---------- */
+  // Simpson's Diversity Index across nationalities: 1 - Σ(p_i^2). Range 0 (all same) to ~1 (all different).
+  const natCounts2 = {};
+  mEmps.forEach(m => { if (m.nationality) natCounts2[m.nationality] = (natCounts2[m.nationality]||0)+1; });
+  const natTotal = Object.values(natCounts2).reduce((s,v)=>s+v,0);
+  let diversityIdx = 0;
+  if (natTotal > 0) {
+    const sumSq = Object.values(natCounts2).reduce((s,v) => s + Math.pow(v/natTotal, 2), 0);
+    diversityIdx = 1 - sumSq;
+  }
+  // Emirati detection: nationality string matches UAE / Emirati / United Arab Emirates (case-insensitive)
+  const EMIRATI_RE = /\bemirati\b|\buae\b|united\s*arab\s*emirates/i;
+  const emiratiCount = mEmps.filter(m => EMIRATI_RE.test(m.nationality || '')).length;
+  const emiratiPct = mEmps.length ? (emiratiCount/mEmps.length)*100 : 0;
+
+  document.getElementById('diversityScorecard').innerHTML = [
+    kpiCard({label:'Diversity Index', value: diversityIdx.toFixed(2), sub:"Simpson's (0 = uniform, 1 = max diverse)"}),
+    kpiCard({label:'Nationalities', value: fmtNum(Object.keys(natCounts2).length)}),
+    kpiCard({label:'Emirati Headcount', value: fmtNum(emiratiCount), tone: emiratiCount>0?'success':''}),
+    kpiCard({label:'Emirati % Staff', value: fmtPct(emiratiPct), sub: `${emiratiCount} of ${mEmps.length}`}),
+    kpiCard({label:'Female %', value: fmtPct(femalePct), sub: `${female} of ${male+female}`}),
+    kpiCard({label:'Leadership Female %', value: (() => {
+      const ld = mEmps.filter(m => LEADERSHIP_RE.test(m.designation));
+      const ldF = ld.filter(m => isFemale(m.gender)).length;
+      const ldM = ld.filter(m => isMale(m.gender)).length;
+      return (ldF+ldM) ? fmtPct(ldF/(ldF+ldM)*100) : '–';
+    })(), sub: 'Directors, VPs, Heads, Chiefs'}),
+  ].join('');
 
   /* ---------- Leavers & Turnover ---------- */
   const leaversSection = document.getElementById('wfLeaversSection');
