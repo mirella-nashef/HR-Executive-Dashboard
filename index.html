@@ -584,7 +584,6 @@
     </nav>
   </aside>
 
-  
   <!-- Main -->
   <div class="main">
 
@@ -829,8 +828,8 @@
             <h3 class="section-heading">Probation</h3>
             <div class="card flush">
               <div class="card-head-block">
-                <div class="card-title">Employees currently on probation</div>
-                <div class="card-subtitle">Probation is 90 days from date of joining. Ordered by days remaining.</div>
+                <div class="card-title" id="probationTitle">Employees on probation</div>
+                <div class="card-subtitle" id="probationSubtitle">Probation is 90 days from date of joining. Ordered by days remaining.</div>
               </div>
               <div class="table-wrap scroll" style="border:none; border-radius:0 0 10px 10px; max-height:360px;">
                 <table class="data" id="probationTable">
@@ -1199,7 +1198,9 @@ function fmtMinAsHrs(m) { if (!m && m!==0) return '–'; const h=Math.floor(m/60
 function fmtHrs(m) { if (!m && m!==0) return '–'; return (m/60).toFixed(2)+'h'; }
 function fmtPct(v) { if (v===null||v===undefined||isNaN(v)) return '–'; return v.toFixed(1)+'%'; }
 function fmtNum(v) { if (v===null||v===undefined||isNaN(v)) return '–'; return new Intl.NumberFormat().format(Math.round(v)); }
-function fmtDate(d) { if (!d) return '–'; return d.toISOString().slice(0,10); }
+// Local-date formatting on purpose: toISOString() converts to UTC first, which in any timezone
+// ahead of UTC prints midnight-local dates one day early (31 Jul → "2026-07-30").
+function fmtDate(d) { if (!d) return '–'; return toInputDate(d); }
 function deptNameFromHierarchy(s) {
   if (!s) return 'Unassigned';
   return String(s).replace(/\s*\(\d+\)\s*$/, '').trim() || 'Unassigned';
@@ -2162,9 +2163,8 @@ function renderWorkforce(/* attendance rows — not used here */) {
   const female = mEmps.filter(m => isFemale(m.gender)).length;
   const femalePct = (male+female) ? female/(male+female)*100 : 0;
   const natSet = new Set(mEmps.map(m => m.nationality).filter(Boolean));
-  // Tenure and probation are always measured against the REAL current date (not the master
-  // snapshot). The snapshot only decides who is "active"; how long they've been here / how
-  // much probation is left is a live number.
+  // Tenure is measured against the REAL current date (not the master snapshot) — how long
+  // someone has been here is a live number.
   const todayRef = new Date(); todayRef.setHours(0,0,0,0);
   const tenures = mEmps.map(m => (todayRef - m.doj)/(1000*60*60*24*365));
   const avgTenure = tenures.length ? tenures.reduce((s,v)=>s+v,0)/tenures.length : 0;
@@ -2173,8 +2173,15 @@ function renderWorkforce(/* attendance rows — not used here */) {
   const monthStart = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
   const monthEnd = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0, 23, 59, 59, 999);
   const newJoinersThisMonth = mEmps.filter(m => m.doj >= monthStart && m.doj <= monthEnd).length;
-  // Still on probation TODAY = joined less than 90 days ago from today
-  const probationCutoff = new Date(todayRef.getTime() - 90 * 86400000);
+
+  // Probation is measured against the LAST DAY OF THE REPORT MONTH, never today. A July master
+  // report is assessed as at 31 Jul, a Feb report as at 28/29 Feb (leap year handled by day 0 of
+  // the next month). Opening the July report in August must not retire people who were still on
+  // probation on 31 Jul.
+  const probRef = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0);
+  const probRefLabel = toInputDate(probRef);
+  // Still on probation as at probRef = joined less than 90 days before that date
+  const probationCutoff = new Date(probRef.getTime() - 90 * 86400000);
   const underProbation = mEmps.filter(m => m.doj > probationCutoff).length;
 
   document.getElementById('workforceKpis').innerHTML = [
@@ -2185,7 +2192,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
     kpiCard({label:'Nationalities', value: fmtNum(natSet.size)}),
     kpiCard({label:'Avg Tenure', value: avgTenure.toFixed(1)+' yrs', sub: 'since joining'}),
     kpiCard({label:'New Joiners (Month)', value: fmtNum(newJoinersThisMonth), sub: monthStart.toLocaleString('en',{month:'short',year:'numeric'})}),
-    kpiCard({label:'Under Probation', value: fmtNum(underProbation), sub: 'joined in last 90 days', tone: underProbation>0?'warning':''}),
+    kpiCard({label:'Under Probation', value: fmtNum(underProbation), sub: `as at ${probRefLabel} (90 days from joining)`, tone: underProbation>0?'warning':''}),
   ].join('');
 
   /* ---------- Trends: HC by month + Joiners by month + Female trend ---------- */
@@ -2327,17 +2334,23 @@ function renderWorkforce(/* attendance rows — not used here */) {
   drawBar('chartWfTenure', Object.keys(tenBands), Object.values(tenBands), 'Employees');
 
   /* ---------- Probation table ---------- */
-  // Days-left is a LIVE number — measured against today's real date, not the master snapshot.
-  // (If HR opens a May report in July, remaining probation should reflect that time has passed.)
+  // Days-left is measured against probRef (last day of the report month), NOT today. Re-opening a
+  // July report in August still shows who was on probation on 31 Jul, with the days they had left
+  // at that point.
   const probEmps = mEmps
     .filter(m => m.doj)
     .map(m => {
       const endDate = new Date(m.doj.getTime() + 90 * 86400000);
-      const daysLeft = Math.ceil((endDate - todayRef) / 86400000);
+      const daysLeft = Math.ceil((endDate - probRef) / 86400000);
       return { m, endDate, daysLeft };
     })
     .filter(x => x.daysLeft > 0)
     .sort((a,b) => a.daysLeft - b.daysLeft);
+  const probTitleEl = document.getElementById('probationTitle');
+  const probSubEl = document.getElementById('probationSubtitle');
+  if (probTitleEl) probTitleEl.textContent = `Employees on probation as at ${probRefLabel}`;
+  if (probSubEl) probSubEl.textContent = `Probation is 90 days from date of joining, assessed at the end of the report month (${probRefLabel}) — not today. Ordered by days remaining at that date.`;
+
   const probTbody = document.querySelector('#probationTable tbody');
   if (probEmps.length) {
     probTbody.innerHTML = probEmps.map(x => {
@@ -3029,7 +3042,6 @@ window.addEventListener('drop', (e) => {
   if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
 });
 </script>
-
 
 </body>
 </html>
