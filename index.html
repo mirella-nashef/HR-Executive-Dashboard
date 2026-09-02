@@ -733,7 +733,7 @@
 
         <div id="workforceContent">
           <div id="workforceSnapshotBadge" style="display:none; margin-bottom:18px; background:var(--primary-soft); border:1px solid #c7d2fe; color:var(--primary); padding:10px 14px; border-radius:8px; font-size:12.5px; display:flex; align-items:center; gap:8px;">
-            <strong style="font-weight:600;">Snapshot date:</strong>
+            <strong style="font-weight:600;">Reporting period ends:</strong>
             <span id="workforceSnapshotDate"></span>
             <span style="color:var(--text-muted); margin-left:auto; font-weight:400;" id="workforceSnapshotSource"></span>
           </div>
@@ -2008,12 +2008,16 @@ function renderExec(rows) {
     if (State.masterMeta && State.masterMeta.snapshotDate) asOf = State.masterMeta.snapshotDate;
     else if (State.filters.to) asOf = State.filters.to;
     else asOf = new Date();
-    // Active = joined by asOf AND (not yet left OR left after asOf)
-    let mEmps = State.master.filter(m => m.doj && m.doj <= asOf && (!m.leaverDate || m.leaverDate > asOf));
+    // Assess as at the END of the report month, matching the Workforce tab, so an employee joining
+    // on the last day of the month is counted in that month's headcount here too.
+    const periodEndDay = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0);
+    const periodEnd    = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0, 23, 59, 59, 999);
+    // Active = joined by period end AND (not yet left OR left after period end)
+    let mEmps = State.master.filter(m => m.doj && m.doj <= periodEnd && (!m.leaverDate || m.leaverDate > periodEnd));
     if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
     if (State.filters.employee !== 'all') mEmps = mEmps.filter(m => String(m.empId) === String(State.filters.employee));
     totalHC = mEmps.length;
-    totalHCSub = `active as of ${toInputDate(asOf)}`;
+    totalHCSub = `active as at ${toInputDate(periodEndDay)}`;
     male   = mEmps.filter(m => isMale(m.gender)).length;
     female = mEmps.filter(m => isFemale(m.gender)).length;
     haveGender = true;
@@ -2136,22 +2140,35 @@ function renderWorkforce(/* attendance rows — not used here */) {
     else { asOf = new Date(); asOfSource = "today's date"; }
   }
 
+  // REPORTING PERIOD END — a master report describes a whole calendar month, so the whole report
+  // is assessed as at the LAST DAY of that month, not the day the file happened to be exported.
+  // An employee who joins on 31 Aug belongs in the August report even when the file is named
+  // "27 Aug 2026 master.xlsx". Day 0 of the next month gives the last day, leap years included.
+  //   periodEndDay = midnight on that day  (for day-count arithmetic)
+  //   periodEnd    = end of that day       (for <= tests against dates carrying a time component)
+  const periodEndDay = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0);
+  const periodEnd    = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0, 23, 59, 59, 999);
+  const periodLabel  = toInputDate(periodEndDay);
+
   // Snapshot badge
   const badge = document.getElementById('workforceSnapshotBadge');
   if (badge) {
     badge.style.display = 'flex';
-    document.getElementById('workforceSnapshotDate').textContent = toInputDate(asOf);
-    document.getElementById('workforceSnapshotSource').textContent = asOfSource;
+    document.getElementById('workforceSnapshotDate').textContent = periodLabel;
+    const exportNote = toInputDate(asOf) !== periodLabel ? ` · file dated ${toInputDate(asOf)}` : '';
+    document.getElementById('workforceSnapshotSource').textContent = asOfSource + exportNote;
   }
 
-  // Active master employees by selected dept / employee / DOJ <= asOf, and not yet left as of asOf
-  let mEmps = State.master.filter(m => m.doj && m.doj <= asOf && (!m.leaverDate || m.leaverDate > asOf));
+  // Active master employees by selected dept / employee / joined by period end, and not yet left
+  // as at period end. Joining on the last day of the month still counts as active for that month.
+  let mEmps = State.master.filter(m => m.doj && m.doj <= periodEnd && (!m.leaverDate || m.leaverDate > periodEnd));
   if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
   if (State.filters.employee !== 'all') mEmps = mEmps.filter(m => String(m.empId) === String(State.filters.employee));
 
-  // Leavers within the selected date range (from → to). If no `from`, treat as "all-time before asOf".
+  // Leavers within the selected date range (from → to). If no `from`, treat as "all-time up to the
+  // period end". Leaving on the last day of the month counts as a leaver for that month.
   const fromD = State.filters.from || new Date(1900, 0, 1);
-  let leavers = State.master.filter(m => m.leaverDate && m.leaverDate >= fromD && m.leaverDate <= asOf);
+  let leavers = State.master.filter(m => m.leaverDate && m.leaverDate >= fromD && m.leaverDate <= periodEnd);
   if (State.filters.dept !== 'all') leavers = leavers.filter(m => m.dept === State.filters.dept);
   if (State.filters.employee !== 'all') leavers = leavers.filter(m => String(m.empId) === String(State.filters.employee));
 
@@ -2171,21 +2188,20 @@ function renderWorkforce(/* attendance rows — not used here */) {
 
   // New joiners this month (relative to asOf)
   const monthStart = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
-  const monthEnd = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0, 23, 59, 59, 999);
-  const newJoinersThisMonth = mEmps.filter(m => m.doj >= monthStart && m.doj <= monthEnd).length;
+  const newJoinersThisMonth = mEmps.filter(m => m.doj >= monthStart && m.doj <= periodEnd).length;
 
   // Probation is measured against the LAST DAY OF THE REPORT MONTH, never today. A July master
   // report is assessed as at 31 Jul, a Feb report as at 28/29 Feb (leap year handled by day 0 of
   // the next month). Opening the July report in August must not retire people who were still on
   // probation on 31 Jul.
-  const probRef = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0);
-  const probRefLabel = toInputDate(probRef);
+  const probRef = periodEndDay;
+  const probRefLabel = periodLabel;
   // Still on probation as at probRef = joined less than 90 days before that date
   const probationCutoff = new Date(probRef.getTime() - 90 * 86400000);
   const underProbation = mEmps.filter(m => m.doj > probationCutoff).length;
 
   document.getElementById('workforceKpis').innerHTML = [
-    kpiCard({label:'Total Headcount', value: fmtNum(totalHC), sub: `active as of ${toInputDate(asOf)}`}),
+    kpiCard({label:'Total Headcount', value: fmtNum(totalHC), sub: `active as at ${periodLabel}`}),
     kpiCard({label:'Departments', value: fmtNum(deptSet.size)}),
     kpiCard({label:'Designations', value: fmtNum(desSet.size)}),
     kpiCard({label:'Female %', value: fmtPct(femalePct), sub: `${female} of ${male+female}`}),
