@@ -610,12 +610,8 @@
     </div>
     <nav id="sideNav">
       <div class="nav-group">
-        <div class="nav-label">Overview</div>
-        <button class="nav-item active" data-tab="exec"><span class="dot"></span>Executive Summary</button>
-      </div>
-      <div class="nav-group">
-        <div class="nav-label">Deep Dive</div>
-        <button class="nav-item" data-tab="workforce"><span class="dot"></span>Workforce</button>
+        <div class="nav-label">Reports</div>
+        <button class="nav-item active" data-tab="workforce"><span class="dot"></span>Workforce</button>
         <button class="nav-item" data-tab="attendance"><span class="dot"></span>Attendance &amp; Productivity</button>
         <button class="nav-item" data-tab="absence"><span class="dot"></span>Absence &amp; Leave</button>
         <button class="nav-item" data-tab="behavior"><span class="dot"></span>Behavior &amp; Engagement</button>
@@ -631,8 +627,8 @@
       <div style="display:flex; align-items:center; gap:12px;">
         <button class="menu-toggle" id="menuToggle">☰</button>
         <div>
-          <h1 id="pageHeaderTitle">Executive Summary</h1>
-          <div class="crumb" id="pageHeaderCrumb">Workforce health at a glance</div>
+          <h1 id="pageHeaderTitle">Workforce</h1>
+          <div class="crumb" id="pageHeaderCrumb">Composition, designations, and org structure</div>
         </div>
       </div>
       <div class="upload-cluster">
@@ -683,86 +679,8 @@
         </div>
       </div>
 
-      <!-- Section 1: Executive Summary -->
-      <section id="tab-exec" class="tab-content active">
-        <div class="section-block">
-          <h3 class="section-heading">Workforce snapshot</h3>
-          <div class="kpi-grid" id="execKpis"></div>
-        </div>
-
-        <div class="section-block">
-          <h3 class="section-heading">Daily attendance trend</h3>
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <div class="card-title">Day-by-day breakdown</div>
-                <div class="card-subtitle">Present · Absent / Single-Punch · Weekly Off · Leave / Sick — across the selected date range</div>
-              </div>
-            </div>
-            <div class="chart-wrap hero"><canvas id="chartDailyTrend"></canvas></div>
-          </div>
-        </div>
-
-        <div class="section-block">
-          <h3 class="section-heading">By department</h3>
-          <div class="chart-grid cols-3">
-            <div class="card">
-              <div class="card-header">
-                <div>
-                  <div class="card-title">Headcount</div>
-                  <div class="card-subtitle">Unique employees observed</div>
-                </div>
-              </div>
-              <div class="chart-wrap"><canvas id="chartHcByDept"></canvas></div>
-            </div>
-            <div class="card">
-              <div class="card-header">
-                <div>
-                  <div class="card-title">Attendance rate</div>
-                  <div class="card-subtitle">Present ÷ scheduled workdays <button class="info-btn" type="button">i</button></div>
-                  <div class="info-note" hidden>Of all the days employees in this department were scheduled to work (weekends, holidays and approved leave excluded), the percentage on which they actually clocked in. 100% = present on every scheduled day.</div>
-                </div>
-              </div>
-              <div class="chart-wrap"><canvas id="chartAttByDept"></canvas></div>
-            </div>
-            <div class="card">
-              <div class="card-header">
-                <div>
-                  <div class="card-title">Average working hours</div>
-                  <div class="card-subtitle">Mean across present days</div>
-                </div>
-              </div>
-              <div class="chart-wrap"><canvas id="chartHoursByDept"></canvas></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="section-block">
-          <h3 class="section-heading">Department health snapshot</h3>
-          <div class="table-wrap scroll">
-            <table class="data" id="deptSnapshotTable">
-              <thead>
-                <tr>
-                  <th>Department</th>
-                  <th class="num">HC</th>
-                  <th class="num">Att %</th>
-                  <th class="num">Avg Hrs</th>
-                  <th class="num">&lt;9hr Days</th>
-                  <th class="num">Remote</th>
-                  <th class="num">Off-site</th>
-                  <th class="num">STO</th>
-                  <th class="num">Sick</th>
-                  <th class="num">Absent</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
       <!-- Section 2: Workforce -->
-      <section id="tab-workforce" class="tab-content">
+      <section id="tab-workforce" class="tab-content active">
 
         <!-- Empty state when master not loaded -->
         <div id="workforceEmpty" class="empty-state hidden" style="margin: 0 0 24px;">
@@ -954,6 +872,45 @@
             Color coding: <span style="color:var(--success); font-weight:600;">green</span> = healthy ·
             <span style="color:var(--warning); font-weight:600;">orange</span> = needs attention ·
             black = neutral count, no threshold applied.
+          </div>
+        </div>
+
+        <div class="section-block">
+          <h3 class="section-heading">Department health snapshot</h3>
+          <div style="font-size:12.5px; color:var(--text-muted); line-height:1.7; margin-bottom:12px;">
+            Each row summarises one department over the selected date range. All counts are
+            <strong style="color:var(--text);">employee-days, not people</strong> — days are totalled across
+            everyone in the department.
+            <ul style="margin:8px 0 0; padding-left:20px; columns:2; column-gap:40px;">
+              <li><strong style="color:var(--text);">HC</strong> — unique employees</li>
+              <li><strong style="color:var(--text);">Att %</strong> — days present ÷ days scheduled to work (weekly offs and holidays are not scheduled days)</li>
+              <li><strong style="color:var(--text);">Avg Hrs</strong> — average working hours per present day</li>
+              <li><strong style="color:var(--text);">&lt;9hr Days</strong> — present days under the 9-hour target</li>
+              <li><strong style="color:var(--text);">Remote</strong> — remote-work days</li>
+              <li><strong style="color:var(--text);">Off-site</strong> — off-site duty days</li>
+              <li><strong style="color:var(--text);">STO</strong> — short-time-off uses</li>
+              <li><strong style="color:var(--text);">Sick</strong> — sick days</li>
+              <li><strong style="color:var(--text);">Absent</strong> — unexplained absences and single-punch days</li>
+            </ul>
+          </div>
+          <div class="table-wrap scroll">
+            <table class="data" id="deptSnapshotTable">
+              <thead>
+                <tr>
+                  <th>Department</th>
+                  <th class="num">HC</th>
+                  <th class="num">Att %</th>
+                  <th class="num">Avg Hrs</th>
+                  <th class="num">&lt;9hr Days</th>
+                  <th class="num">Remote</th>
+                  <th class="num">Off-site</th>
+                  <th class="num">STO</th>
+                  <th class="num">Sick</th>
+                  <th class="num">Absent</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
           </div>
         </div>
 
@@ -1151,7 +1108,6 @@
    ============================================================= */
 
 const PAGE_META = {
-  exec:       { title: 'Executive Summary',         crumb: 'Workforce health at a glance' },
   workforce:  { title: 'Workforce',                 crumb: 'Composition, designations, and org structure' },
   attendance: { title: 'Attendance & Productivity', crumb: 'Punctuality, working hours, flexibility' },
   absence:    { title: 'Absence & Leave',           crumb: 'Sick leave, annual leave, absence patterns' },
@@ -1185,7 +1141,7 @@ const State = {
   filters: { dept: 'all', employee: 'all', from: null, to: null },
   charts: {},
   loadedFiles: [],
-  activeTab: 'exec',
+  activeTab: 'workforce',
 };
 
 /* ---------- Utilities ---------- */
@@ -1997,7 +1953,6 @@ function renderFilterSummary(rows) {
 function renderAll() {
   const rows = getFilteredRows();
   renderFilterSummary(rows);
-  renderExec(rows);
   renderWorkforce(rows);
   renderAttendance(rows);
   renderAbsence(rows);
@@ -2020,128 +1975,6 @@ document.addEventListener('click', (e) => {
   const note = host ? host.querySelector('.info-note') : null;
   if (note) note.hidden = !note.hidden;
 });
-
-/* ---------- Section 1: Executive ---------- */
-function renderExec(rows) {
-  const empIds = new Set(rows.map(r => r.empId));
-  const scheduled = rows.filter(r => r.isScheduledWorkday);
-  const presentDays = scheduled.filter(r => r.isPresent).length;
-  const attendancePct = scheduled.length ? (presentDays/scheduled.length)*100 : 0;
-  const presentRows = rows.filter(r => r.isPresent && r.workMin > 0);
-  const avgWorkMin = presentRows.length ? presentRows.reduce((s,r)=>s+r.workMin,0)/presentRows.length : 0;
-  const remoteDays = rows.filter(r => r.isRemote).length;
-  const offsiteDays = rows.filter(r => r.isOffsite).length;
-  const stoUses = rows.filter(r => r.stoMin > 0 || r.isSto).length;
-  const stoTotalMin = rows.reduce((s,r) => s+(r.stoMin||0), 0);
-  const sickDays = rows.filter(r => r.isSick).length;
-  const annualDays = rows.filter(r => r.isAnnualLeave).length;
-  const under9Days = rows.filter(r => r.underTarget).length;
-  const lateCount = rows.filter(r => r.isLate).length;
-  const lateEmployees = new Set(rows.filter(r => r.isLate).map(r => r.empId)).size;
-  const singlePunch = rows.filter(r => r.isSinglePunch).length;
-
-  // Total Headcount + Male / Female come from the master file when it's loaded;
-  // we fall back to "unique in attendance" only when there's no master yet.
-  let totalHC = empIds.size;
-  let totalHCSub = 'unique in attendance';
-  let male = 0, female = 0, haveGender = false;
-  if (State.master.length) {
-    // Use the SAME asOf precedence as the Workforce tab: master snapshot date wins.
-    // Otherwise headcount here drifts from Workforce because "today" ≠ snapshot.
-    let asOf;
-    if (State.masterMeta && State.masterMeta.snapshotDate) asOf = State.masterMeta.snapshotDate;
-    else if (State.filters.to) asOf = State.filters.to;
-    else asOf = new Date();
-    // Assess as at the END of the report month, matching the Workforce tab, so an employee joining
-    // on the last day of the month is counted in that month's headcount here too.
-    const periodEndDay = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0);
-    const periodEnd    = new Date(asOf.getFullYear(), asOf.getMonth()+1, 0, 23, 59, 59, 999);
-    // Active = joined by period end AND (not yet left OR left after period end)
-    let mEmps = State.master.filter(m => m.doj && m.doj <= periodEnd && (!m.leaverDate || m.leaverDate > periodEnd));
-    if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
-    if (State.filters.employee !== 'all') mEmps = mEmps.filter(m => String(m.empId) === String(State.filters.employee));
-    totalHC = mEmps.length;
-    totalHCSub = `active as at ${toInputDate(periodEndDay)}`;
-    male   = mEmps.filter(m => isMale(m.gender)).length;
-    female = mEmps.filter(m => isFemale(m.gender)).length;
-    haveGender = true;
-  }
-
-  const kpis = [];
-  kpis.push(kpiCard({label:'Total Headcount', value: fmtNum(totalHC), sub: totalHCSub}));
-  kpis.push(kpiCard({label:'Avg Attendance', value: fmtPct(attendancePct), sub: `${presentDays} / ${scheduled.length} scheduled`, tone: attendancePct>=95?'success': attendancePct>=85?'':'warning', info:'Present days ÷ scheduled workdays across everyone in range. Scheduled workdays exclude weekly offs and holidays, so this reads: of the days people were expected in, the share they actually attended.'}));
-  kpis.push(kpiCard({label:'Avg Working Hours', value: fmtHrs(avgWorkMin), sub: 'across present days'}));
-  kpis.push(kpiCard({label:'Late Arrivals', value: fmtNum(lateCount), sub: `${lateEmployees} employee${lateEmployees===1?'':'s'} · after 09:00`, tone: lateCount>0?'warning':''}));
-  kpis.push(kpiCard({label:'< 9 Hr Days', value: fmtNum(under9Days), sub: 'below target', tone: under9Days>0?'warning':''}));
-  kpis.push(kpiCard({label:'Single Punch', value: fmtNum(singlePunch), sub: 'absent / incomplete', tone: singlePunch>0?'warning':''}));
-  kpis.push(kpiCard({label:'Remote Days', value: fmtNum(remoteDays), sub: 'WFH + remote off-site'}));
-  kpis.push(kpiCard({label:'Off-Site Days', value: fmtNum(offsiteDays), sub: 'all off-site duty'}));
-  kpis.push(kpiCard({label:'Short Time Off', value: fmtNum(stoUses), sub: stoTotalMin > 0 ? fmtMinAsHrs(stoTotalMin)+' total' : 'uses in range'}));
-  kpis.push(kpiCard({label:'Sick Leave', value: fmtNum(sickDays), sub: 'days in range', tone: sickDays>0?'warning':''}));
-  kpis.push(kpiCard({label:'Annual Leave', value: fmtNum(annualDays), sub: 'days in range'}));
-  if (haveGender) {
-    kpis.push(kpiCard({label:'Male / Female', value: `${male} / ${female}`, sub: 'from master file'}));
-  } else {
-    kpis.push(kpiCard({label:'Attendance Adj.', value: fmtNum(rows.filter(r=>r.isAdjustment).length), sub: 'requests in range'}));
-  }
-  document.getElementById('execKpis').innerHTML = kpis.join('');
-
-  // Charts
-  const byDept = groupBy(rows, r => r.dept);
-  const deptNames = Object.keys(byDept).sort();
-
-  drawBar('chartHcByDept', deptNames, deptNames.map(d => new Set(byDept[d].map(r=>r.empId)).size), 'Headcount');
-  drawBar('chartAttByDept', deptNames, deptNames.map(d => {
-    const sch = byDept[d].filter(r => r.isScheduledWorkday);
-    const pr = sch.filter(r => r.isPresent).length;
-    return sch.length ? +(pr/sch.length*100).toFixed(1) : 0;
-  }), 'Attendance', { max: 100, suffix: '%' });
-  drawBar('chartHoursByDept', deptNames, deptNames.map(d => {
-    const pr = byDept[d].filter(r => r.isPresent && r.workMin > 0);
-    return pr.length ? +(pr.reduce((s,r)=>s+r.workMin,0)/pr.length/60).toFixed(2) : 0;
-  }), 'Avg Hours', { suffix: 'h' });
-
-  // Daily trend hero chart
-  const byDate = groupBy(rows, r => fmtDate(r.date));
-  const dateKeys = Object.keys(byDate).sort();
-  drawLine('chartDailyTrend', dateKeys, [
-    { label: 'Present',          data: dateKeys.map(k => byDate[k].filter(r => r.isPresent).length), color: COLORS.emerald, fill: true },
-    { label: 'Absent / SP',      data: dateKeys.map(k => byDate[k].filter(r => r.isAbsent && !r.isWeeklyOff && !r.isHoliday).length), color: COLORS.red },
-    { label: 'Weekly Off',       data: dateKeys.map(k => byDate[k].filter(r => r.isWeeklyOff).length), color: COLORS.slate },
-    { label: 'Leave / Sick',     data: dateKeys.map(k => byDate[k].filter(r => r.isAnyLeave).length), color: COLORS.amber },
-  ]);
-
-  // Dept snapshot
-  const tbody = document.querySelector('#deptSnapshotTable tbody');
-  tbody.innerHTML = deptNames.map(d => {
-    const drows = byDept[d];
-    const dscheduled = drows.filter(r => r.isScheduledWorkday);
-    const dpresent = dscheduled.filter(r => r.isPresent);
-    const dpresentHrs = dpresent.filter(r => r.workMin > 0);
-    const datt = dscheduled.length ? (dpresent.length/dscheduled.length)*100 : 0;
-    const davgH = dpresentHrs.length ? dpresentHrs.reduce((s,r)=>s+r.workMin,0)/dpresentHrs.length/60 : 0;
-    const dunder = drows.filter(r => r.underTarget).length;
-    const drem = drows.filter(r => r.isRemote).length;
-    const doff = drows.filter(r => r.isOffsite).length;
-    const dsto = drows.filter(r => r.stoMin > 0 || r.isSto).length;
-    const dsick = drows.filter(r => r.isSick).length;
-    const dabs = drows.filter(r => (r.isAbsent || r.isSinglePunch) && !r.isWeeklyOff && !r.isHoliday).length;
-    const headcountD = new Set(drows.map(r=>r.empId)).size;
-    const attClass = datt >= 95 ? 'success' : datt >= 85 ? 'warning' : 'danger';
-    return `<tr>
-      <td><strong>${escapeHtml(d)}</strong></td>
-      <td class="num">${headcountD}</td>
-      <td class="num"><span class="pill ${attClass}">${datt.toFixed(1)}%</span></td>
-      <td class="num">${davgH.toFixed(2)}h</td>
-      <td class="num">${dunder}</td>
-      <td class="num">${drem}</td>
-      <td class="num">${doff}</td>
-      <td class="num">${dsto}</td>
-      <td class="num">${dsick}</td>
-      <td class="num">${dabs}</td>
-    </tr>`;
-  }).join('');
-}
 
 /* ---------- Section 2: Workforce ---------- */
 // Notice period by seniority: Heads / Directors and above serve 3 months; Assistant Manager,
@@ -2633,6 +2466,37 @@ function renderAttendance(rows) {
   const dowCounts = [0,0,0,0,0,0,0];
   rows.filter(r => r.stoMin > 0 || r.isSto).forEach(r => { dowCounts[r.dow]++; });
   drawBar('chartStoByDow', DOW, dowCounts, 'STO uses', { color: COLORS.cyan });
+
+  // Department health snapshot — one row per department; all counts are employee-days in range.
+  const tbody = document.querySelector('#deptSnapshotTable tbody');
+  if (tbody) tbody.innerHTML = deptNames.map(d => {
+    const drows = byDept[d];
+    const dscheduled = drows.filter(r => r.isScheduledWorkday);
+    const dpresent = dscheduled.filter(r => r.isPresent);
+    const dpresentHrs = dpresent.filter(r => r.workMin > 0);
+    const datt = dscheduled.length ? (dpresent.length/dscheduled.length)*100 : 0;
+    const davgH = dpresentHrs.length ? dpresentHrs.reduce((s,r)=>s+r.workMin,0)/dpresentHrs.length/60 : 0;
+    const dunder = drows.filter(r => r.underTarget).length;
+    const drem = drows.filter(r => r.isRemote).length;
+    const doff = drows.filter(r => r.isOffsite).length;
+    const dsto = drows.filter(r => r.stoMin > 0 || r.isSto).length;
+    const dsick = drows.filter(r => r.isSick).length;
+    const dabs = drows.filter(r => (r.isAbsent || r.isSinglePunch) && !r.isWeeklyOff && !r.isHoliday).length;
+    const headcountD = new Set(drows.map(r=>r.empId)).size;
+    const attClass = datt >= 95 ? 'success' : datt >= 85 ? 'warning' : 'danger';
+    return `<tr>
+      <td><strong>${escapeHtml(d)}</strong></td>
+      <td class="num">${headcountD}</td>
+      <td class="num"><span class="pill ${attClass}">${datt.toFixed(1)}%</span></td>
+      <td class="num">${davgH.toFixed(2)}h</td>
+      <td class="num">${dunder}</td>
+      <td class="num">${drem}</td>
+      <td class="num">${doff}</td>
+      <td class="num">${dsto}</td>
+      <td class="num">${dsick}</td>
+      <td class="num">${dabs}</td>
+    </tr>`;
+  }).join('');
 }
 
 /* ---------- Section 4: Absence ---------- */
