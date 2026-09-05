@@ -571,10 +571,17 @@
     .tab-content { display: none !important; }
     .tab-content.active { display: block !important; }
     .table-wrap.scroll { max-height: none !important; overflow: visible !important; }
-    .kpi-grid { gap: 8px !important; }
-    .chart-wrap { height: 240px !important; }
-    .chart-wrap.hero { height: 320px !important; }
-    .chart-wrap.tall { height: 300px !important; }
+    /* Print mirrors the on-screen layout. The screen CSS collapses chart grids to one column
+       below 1100px, and A4-landscape print width falls under that breakpoint — so without these
+       overrides every chart stacks on its own line when printed. */
+    .kpi-grid { gap: 8px !important; grid-template-columns: repeat(6, 1fr) !important; }
+    .kpi-grid.cols-4 { grid-template-columns: repeat(4, 1fr) !important; }
+    .chart-grid.cols-2 { grid-template-columns: repeat(2, 1fr) !important; }
+    .chart-grid.cols-3 { grid-template-columns: repeat(3, 1fr) !important; }
+    .chart-grid.auto { grid-template-columns: repeat(2, 1fr) !important; }
+    .chart-wrap { height: 260px !important; }
+    .chart-wrap.hero { height: 340px !important; }
+    .chart-wrap.tall { height: 320px !important; }
     .print-header {
       display: block !important;
       padding: 0 0 12px;
@@ -847,18 +854,6 @@
               </div>
               <div class="card flush">
                 <div class="card-head-block">
-                  <div class="card-title">Upcoming birthdays</div>
-                  <div class="card-subtitle">Next 30 days</div>
-                </div>
-                <div class="table-wrap scroll" style="border:none; border-radius:0 0 10px 10px; max-height:340px;">
-                  <table class="data" id="birthdaysTable">
-                    <thead><tr><th>Employee</th><th>Department</th><th class="num">Date</th><th class="num">Turning</th></tr></thead>
-                    <tbody></tbody>
-                  </table>
-                </div>
-              </div>
-              <div class="card flush">
-                <div class="card-head-block">
                   <div class="card-title" id="monthBirthdaysTitle">Birthdays in report month</div>
                   <div class="card-subtitle">Everyone with a birthday in the month of this master report, ordered by day</div>
                 </div>
@@ -1013,6 +1008,12 @@
         <div class="section-block">
           <h3 class="section-heading">Absence KPIs</h3>
           <div class="kpi-grid cols-4" id="absenceKpis"></div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:10px;">
+            Color coding: <span style="color:var(--success); font-weight:600;">green</span> = healthy ·
+            <span style="color:var(--warning); font-weight:600;">orange</span> = needs attention ·
+            <span style="color:var(--danger); font-weight:600;">red</span> = requires follow-up ·
+            black = neutral count, no threshold applied.
+          </div>
         </div>
 
         <div class="section-block">
@@ -1064,7 +1065,6 @@
             <div style="font-size:12.5px; color:var(--text-muted); line-height:1.7;">
               <strong style="color:var(--text);">Consistent under-hours</strong> — employees with 5 or more present days under the 9-hour target <em>and</em> an average working day below 9 hours.<br/>
               <strong style="color:var(--text);">High remote (&gt;40%)</strong> — employees whose remote days are more than 40% of their working days (remote ÷ (present + remote)).<br/>
-              <strong style="color:var(--text);">Frequent STO</strong> — employees with 3 or more short-time-off uses in the selected range.<br/>
               <strong style="color:var(--text);">Burnout risk</strong> — employees averaging over 10.5 working hours per present day who took zero annual leave in the range. In the table: <span class="pill danger">High</span> = average above 11h with no leave at all; <span class="pill warning">Medium</span> = average above 10.5h or 5+ days over 11h.<br/>
               <strong style="color:var(--text);">Frequent adjustments</strong> — employees with 5 or more attendance adjustment requests.<br/>
               All counts are <strong style="color:var(--text);">numbers of employees</strong>, not numbers of days or incidents.
@@ -1073,7 +1073,7 @@
         </div>
 
         <div class="section-block">
-          <div class="chart-grid cols-3">
+          <div class="chart-grid cols-2">
             <div class="card flush">
               <div class="card-head-block">
                 <div class="card-title">Consistent under-performers</div>
@@ -1096,19 +1096,6 @@
               <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 380px;">
                 <table class="data" id="remoteTable">
                   <thead><tr><th>Employee</th><th>Dept</th><th class="num">Days</th><th class="num">% Present</th></tr></thead>
-                  <tbody></tbody>
-                </table>
-              </div>
-            </div>
-            <div class="card flush">
-              <div class="card-head-block">
-                <div class="card-title">Frequent short time off</div>
-                <div class="card-subtitle">Top 15 STO users in the selected period <button class="info-btn" type="button">i</button></div>
-                <div class="info-note" hidden>The 15 employees with the most short-time-off uses in the range (everyone with at least one use qualifies; sorted by number of uses). "Uses" counts occasions, "Total Hrs" is the summed duration. 3+ uses counts toward the Frequent STO KPI.</div>
-              </div>
-              <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 380px;">
-                <table class="data" id="stoTable">
-                  <thead><tr><th>Employee</th><th>Dept</th><th class="num">Uses</th><th class="num">Total Hrs</th></tr></thead>
                   <tbody></tbody>
                 </table>
               </div>
@@ -1137,7 +1124,7 @@
           <div class="card flush">
             <div class="card-head-block">
               <div class="card-title">Highest users of attendance adjustment requests</div>
-              <div class="card-subtitle">May indicate punching habits or operational issues</div>
+              <div class="card-subtitle">Employees with 4 or more requests · may indicate punching habits or operational issues</div>
             </div>
             <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px;">
               <table class="data" id="adjTable">
@@ -2285,13 +2272,13 @@ function renderWorkforce(/* attendance rows — not used here */) {
     const hcByMonth = months.map(ms => activeAt(monthEndOf(ms)).length);
     drawLine('chartHcByMonth', monthLabels, [
       { label: 'Active HC', data: hcByMonth, color: COLORS.primary, fill: true }
-    ], { valueLabels: true });
+    ], { valueLabels: true, quarterTicks: true });
 
     const joinersByMonth = months.map(ms => {
       const next = new Date(ms.getFullYear(), ms.getMonth()+1, 1);
       return histEmps.filter(m => m.doj >= ms && m.doj < next).length;
     });
-    drawBar('chartJoinersByMonth', monthLabels, joinersByMonth, 'Joiners', { autoSkip: true, maxTicksLimit: 24 });
+    drawBar('chartJoinersByMonth', monthLabels, joinersByMonth, 'Joiners', { quarterTicks: true });
 
     const femaleTrend = months.map(ms => {
       const active = activeAt(monthEndOf(ms));
@@ -2301,7 +2288,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
     });
     drawLine('chartFemaleTrend', monthLabels, [
       { label: 'Female %', data: femaleTrend, color: COLORS.pink, fill: true }
-    ]);
+    ], { quarterTicks: true });
 
     // Quarterly views — measured at each quarter end; the current (report) quarter is measured
     // at the report period end since the quarter hasn't closed yet.
@@ -2313,7 +2300,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
     const qMeasure = (d) => (d <= periodEnd ? new Date(d.getFullYear(), d.getMonth()+1, 0, 23,59,59,999) : periodEnd);
 
     drawBar('chartHcByQuarter', qLabels, qEnds.map(d => activeAt(qMeasure(d)).length), 'Headcount',
-      { autoSkip: true, maxTicksLimit: 16, valueLabels: true });
+      { valueLabels: true });
 
     const femaleByQuarter = qEnds.map(d => {
       const active = activeAt(qMeasure(d));
@@ -2322,7 +2309,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
       return (f+ml) ? +(f/(f+ml)*100).toFixed(1) : 0;
     });
     drawBar('chartFemaleQuarter', qLabels, femaleByQuarter, 'Female %',
-      { autoSkip: true, maxTicksLimit: 16, valueLabels: true, suffix: '%', color: COLORS.pink });
+      { valueLabels: true, suffix: '%', color: COLORS.pink });
   }
 
   /* ---------- Distribution charts ---------- */
@@ -2378,19 +2365,8 @@ function renderWorkforce(/* attendance rows — not used here */) {
   // Only show "Under 20" band if it has anyone
   if (ageBands['Under 20'] === 0) delete ageBands['Under 20'];
 
-  // Upcoming birthdays — compared against the REAL current date, not the master snapshot
-  // (a May snapshot shouldn't tell you "next birthday in X days" if it's actually July)
-  const today = new Date(); today.setHours(0,0,0,0);
-  const upcoming = mEmps.filter(m => m.dob).map(m => {
-    const bd = new Date(today.getFullYear(), m.dob.getMonth(), m.dob.getDate());
-    if (bd < today) bd.setFullYear(bd.getFullYear()+1);
-    const daysAway = Math.round((bd - today) / 86400000);
-    return { m, bd, daysAway, turning: bd.getFullYear() - m.dob.getFullYear() };
-  }).filter(x => x.daysAway <= 30).sort((a,b) => a.daysAway - b.daysAway);
-
   document.getElementById('lifeStageKpis').innerHTML = [
     kpiCard({label:'Average Age', value: avgAge > 0 ? avgAge.toFixed(1)+' yrs' : '–'}),
-    kpiCard({label:'Birthdays (30d)', value: fmtNum(upcoming.length), sub: `as of ${toInputDate(today)}`}),
   ].join('');
 
   if (ages.length) {
@@ -2398,21 +2374,6 @@ function renderWorkforce(/* attendance rows — not used here */) {
       { colors: Object.keys(ageBands).map((_,i) => COLORS.palette[i % COLORS.palette.length]) });
   } else {
     destroyIfExists('chartAgeGroups');
-  }
-
-  const bdayTbody = document.querySelector('#birthdaysTable tbody');
-  if (upcoming.length) {
-    bdayTbody.innerHTML = upcoming.map(u => {
-      const dayLabel = u.daysAway === 0 ? 'today' : u.daysAway === 1 ? 'tomorrow' : `in ${u.daysAway}d`;
-      return `<tr>
-        <td><strong>${escapeHtml(u.m.fullName)}</strong></td>
-        <td>${escapeHtml(u.m.dept || '–')}</td>
-        <td class="num">${u.bd.toLocaleString('en',{month:'short',day:'numeric'})} <span style="color:var(--text-muted);">· ${dayLabel}</span></td>
-        <td class="num">${u.turning}</td>
-      </tr>`;
-    }).join('');
-  } else {
-    bdayTbody.innerHTML = emptyRow(4);
   }
 
   /* ---------- Birthdays in the report month ---------- */
@@ -2796,7 +2757,6 @@ function renderBehavior(rows) {
   const isConsUnder = (e) => { const avg = e.presentDays ? e.totalMin/e.presentDays : 0; return e.under9 >= 5 && avg < 9*60; };
   const consUnder = allEmps.filter(isConsUnder).length;
   const highRemote = allEmps.filter(e => e.presentDays > 0 && e.remote/(e.presentDays+e.remote) > 0.4).length;
-  const freqSto = allEmps.filter(e => e.sto >= 3).length;
   const burnout = allEmps.filter(e => { const avg = e.presentDays ? e.totalMin/e.presentDays : 0; return avg > 10.5*60 && e.annual === 0; }).length;
   const freqAdj = allEmps.filter(e => e.adjustments >= 5).length;
   const totalAdj = allEmps.reduce((s,e)=>s+e.adjustments,0);
@@ -2804,7 +2764,6 @@ function renderBehavior(rows) {
   document.getElementById('behaviorKpis').innerHTML = [
     kpiCard({label:'Consistent Under-Hours', value: fmtNum(consUnder), sub:'employees', tone: consUnder>0?'warning':'', info:'Number of employees with 5 or more present days under the 9-hour target whose average working day is also below 9 hours.'}),
     kpiCard({label:'High Remote (&gt;40%)', value: fmtNum(highRemote), sub:'employees', info:'Number of employees whose remote days are more than 40% of their working days (remote ÷ (present + remote)).'}),
-    kpiCard({label:'Frequent STO (3+)', value: fmtNum(freqSto), sub:'employees', info:'Number of employees with 3 or more short-time-off uses in the selected range.'}),
     kpiCard({label:'Burnout Risk', value: fmtNum(burnout), sub:'employees', tone: burnout>0?'danger':'', info:'Number of employees averaging over 10.5 working hours per present day who took zero annual leave in the range.'}),
     kpiCard({label:'Frequent Adj. (5+)', value: fmtNum(freqAdj), sub:'employees', tone: freqAdj>0?'warning':'', info:'Number of employees who filed 5 or more attendance adjustment requests in the range.'}),
     kpiCard({label:'Total Adjustments', value: fmtNum(totalAdj), sub:'requests (not employees)', info:'Total attendance adjustment requests across everyone — the one number here that counts requests rather than employees.'}),
@@ -2823,11 +2782,6 @@ function renderBehavior(rows) {
     `<tr><td><strong>${escapeHtml(e.name)}</strong></td><td>${escapeHtml(e.dept)}</td><td class="num">${e.remote}</td><td class="num">${e.pct.toFixed(1)}%</td></tr>`
   ).join('') || emptyRow(4);
 
-  const stoTop = allEmps.filter(e => e.sto > 0).sort((a,b)=>b.sto-a.sto).slice(0,15);
-  document.querySelector('#stoTable tbody').innerHTML = stoTop.map(e =>
-    `<tr><td><strong>${escapeHtml(e.name)}</strong></td><td>${escapeHtml(e.dept)}</td><td class="num">${e.sto}</td><td class="num">${(e.stoMin/60).toFixed(2)}h</td></tr>`
-  ).join('') || emptyRow(4);
-
   const burns = allEmps.filter(e => { const avg = e.presentDays ? e.totalMin/e.presentDays : 0; return avg > 10.5*60 || e.over11 >= 5; })
     .map(e => {
       const avg = e.presentDays ? e.totalMin/e.presentDays/60 : 0;
@@ -2843,7 +2797,8 @@ function renderBehavior(rows) {
     return `<tr><td><strong>${escapeHtml(e.name)}</strong></td><td>${escapeHtml(e.dept)}</td><td class="num">${e.avg.toFixed(2)}h</td><td class="num">${e.over11}</td><td class="num">${e.leaveDays}</td><td class="num"><span class="pill ${pill}">${e.risk}</span></td></tr>`;
   }).join('') || emptyRow(6);
 
-  const adjTop = allEmps.filter(e => e.adjustments > 0).sort((a,b)=>b.adjustments-a.adjustments).slice(0,30);
+  // Only employees with 4 or more adjustment requests are worth surfacing here.
+  const adjTop = allEmps.filter(e => e.adjustments >= 4).sort((a,b)=>b.adjustments-a.adjustments).slice(0,30);
   document.querySelector('#adjTable tbody').innerHTML = adjTop.map(e => {
     const top = Object.entries(e.adjReasons).sort((a,b)=>b[1]-a[1])[0];
     return `<tr><td><strong>${escapeHtml(e.name)}</strong></td><td>${escapeHtml(e.dept)}</td><td class="num">${e.adjustments}</td><td>${top ? escapeHtml(top[0])+` (${top[1]})` : '–'}</td></tr>`;
@@ -2955,13 +2910,18 @@ function drawBar(canvasId, labels, data, dsLabel, opts = {}) {
     ticks: {
       font: { size: 11 },
       color: '#64748b',
-      autoSkip: !!opts.autoSkip,
-      maxTicksLimit: opts.maxTicksLimit,
+      autoSkip: !!opts.autoSkip && !opts.quarterTicks,
+      maxTicksLimit: opts.quarterTicks ? undefined : opts.maxTicksLimit,
       maxRotation: horizontal ? 0 : 45,
       minRotation: 0,
       callback: function(val) {
         const lbl = this.getLabelForValue(val);
         if (horizontal) return lbl;
+        // Quarter-aligned months only (Jan / Apr / Jul / Oct) so the axis reads as real quarters
+        if (opts.quarterTicks) {
+          const mm = /^\d{4}-(\d{2})$/.exec(lbl);
+          if (mm && mm[1] !== '01' && mm[1] !== '04' && mm[1] !== '07' && mm[1] !== '10') return '';
+        }
         // Truncate long labels for vertical bars
         return lbl && lbl.length > 28 ? lbl.slice(0,27)+'…' : lbl;
       }
@@ -3049,8 +3009,17 @@ function drawLine(canvasId, labels, datasets, opts = {}) {
             font: { size: 11 },
             color: '#64748b',
             maxRotation: 45,
-            autoSkip: true,
-            maxTicksLimit: 14,
+            autoSkip: !opts.quarterTicks,
+            maxTicksLimit: opts.quarterTicks ? undefined : 14,
+            callback: function(val) {
+              const lbl = this.getLabelForValue(val);
+              // Quarter-aligned months only (Jan / Apr / Jul / Oct)
+              if (opts.quarterTicks) {
+                const mm = /^\d{4}-(\d{2})$/.exec(lbl);
+                if (mm && mm[1] !== '01' && mm[1] !== '04' && mm[1] !== '07' && mm[1] !== '10') return '';
+              }
+              return lbl;
+            }
           }
         },
         y: {
