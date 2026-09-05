@@ -532,6 +532,23 @@
 
   /* Print */
   .print-header { display: none; }
+  .info-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; margin-left: 6px; vertical-align: 1px;
+    border-radius: 50%; border: 1px solid var(--border);
+    background: var(--surface, #fff); color: var(--text-muted);
+    font-size: 10px; font-weight: 700; font-style: italic; font-family: Georgia, serif;
+    cursor: pointer; line-height: 1; padding: 0;
+  }
+  .info-btn:hover { color: var(--primary); border-color: var(--primary); }
+  .info-note {
+    font-size: 12px; color: var(--text-muted); line-height: 1.5;
+    background: var(--primary-soft, #eef2ff); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; margin-top: 8px; text-align: left;
+  }
+  .info-note[hidden] { display: none; }
+  .kpi .info-note { font-weight: 400; text-transform: none; letter-spacing: 0; }
+
   @media print {
     @page { size: A4 landscape; margin: 10mm; }
     body { background: #fff !important; }
@@ -540,7 +557,17 @@
     .main { width: 100% !important; }
     .app-shell { display: block !important; }
     .card, .kpi { box-shadow: none !important; border-color: #d1d5db !important; break-inside: avoid; page-break-inside: avoid; }
-    .section-block { break-inside: avoid-page; margin-bottom: 16px !important; }
+    /* Long tables (flush cards) may flow across pages; headings stay glued to their content
+       so a title never prints alone at the bottom of a page. */
+    .card.flush { break-inside: auto; page-break-inside: auto; }
+    .section-block { break-inside: auto; margin-bottom: 16px !important; }
+    .section-heading { break-after: avoid; page-break-after: avoid; }
+    .card-head-block, .card-header { break-after: avoid; page-break-after: avoid; }
+    table { break-inside: auto; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+    thead { display: table-header-group; }
+    /* Charts must never overflow the printable width */
+    canvas { max-width: 100% !important; }
     .tab-content { display: none !important; }
     .tab-content.active { display: block !important; }
     .table-wrap.scroll { max-height: none !important; overflow: visible !important; }
@@ -680,7 +707,8 @@
               <div class="card-header">
                 <div>
                   <div class="card-title">Attendance rate</div>
-                  <div class="card-subtitle">Present ÷ scheduled workdays</div>
+                  <div class="card-subtitle">Present ÷ scheduled workdays <button class="info-btn" type="button">i</button></div>
+                  <div class="info-note" hidden>Of all the days employees in this department were scheduled to work (weekends, holidays and approved leave excluded), the percentage on which they actually clocked in. 100% = present on every scheduled day.</div>
                 </div>
               </div>
               <div class="chart-wrap"><canvas id="chartAttByDept"></canvas></div>
@@ -754,6 +782,10 @@
                 <div class="card-header"><div><div class="card-title">New joiners by month</div></div></div>
                 <div class="chart-wrap"><canvas id="chartJoinersByMonth"></canvas></div>
               </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Total headcount by quarter</div><div class="card-subtitle">Active employees at each quarter end, up to the report period end</div></div></div>
+                <div class="chart-wrap"><canvas id="chartHcByQuarter"></canvas></div>
+              </div>
             </div>
           </div>
 
@@ -798,6 +830,10 @@
                 <div class="card-header"><div><div class="card-title">Female representation trend</div><div class="card-subtitle">% female of active workforce over time</div></div></div>
                 <div class="chart-wrap"><canvas id="chartFemaleTrend"></canvas></div>
               </div>
+              <div class="card">
+                <div class="card-header"><div><div class="card-title">Female representation by quarter</div><div class="card-subtitle">% female of active workforce at each quarter end</div></div></div>
+                <div class="chart-wrap"><canvas id="chartFemaleQuarter"></canvas></div>
+              </div>
             </div>
           </div>
 
@@ -821,6 +857,18 @@
                   </table>
                 </div>
               </div>
+              <div class="card flush">
+                <div class="card-head-block">
+                  <div class="card-title" id="monthBirthdaysTitle">Birthdays in report month</div>
+                  <div class="card-subtitle">Everyone with a birthday in the month of this master report, ordered by day</div>
+                </div>
+                <div class="table-wrap scroll" style="border:none; border-radius:0 0 10px 10px; max-height:340px;">
+                  <table class="data" id="monthBirthdaysTable">
+                    <thead><tr><th>Employee</th><th>Department</th><th class="num">Day</th><th class="num">Turning</th></tr></thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -829,7 +877,7 @@
             <div class="card flush">
               <div class="card-head-block">
                 <div class="card-title" id="probationTitle">Employees on probation</div>
-                <div class="card-subtitle" id="probationSubtitle">Probation is 90 days from date of joining. Ordered by days remaining.</div>
+                <div class="card-subtitle" id="probationSubtitle">Probation is 3 calendar months from date of joining. Ordered by days remaining.</div>
               </div>
               <div class="table-wrap scroll" style="border:none; border-radius:0 0 10px 10px; max-height:360px;">
                 <table class="data" id="probationTable">
@@ -894,31 +942,6 @@
             </div>
           </div>
 
-          <div class="section-block">
-            <h3 class="section-heading">Org health</h3>
-            <div class="chart-grid cols-2">
-              <div class="card flush">
-                <div class="card-head-block">
-                  <div class="card-title">Span of control</div>
-                  <div class="card-subtitle">Direct reports per manager</div>
-                </div>
-                <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 420px;">
-                  <table class="data" id="spanOfControlTable">
-                    <thead><tr><th>Manager</th><th class="num">Reports</th><th>Departments</th></tr></thead>
-                    <tbody></tbody>
-                  </table>
-                </div>
-              </div>
-              <div class="card">
-                <div class="card-header"><div><div class="card-title">Structure metrics</div></div></div>
-                <div id="orgMetrics"></div>
-                <div style="font-size:12px; color:var(--text-muted); margin-top:18px; padding-top:14px; border-top:1px solid var(--border); line-height: 1.5;">
-                  <strong style="color:var(--text); font-weight:600;">Open positions vs Filled</strong><br/>
-                  Requires a recruitment / vacancies report (job openings with status).
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -927,6 +950,11 @@
         <div class="section-block">
           <h3 class="section-heading">Productivity KPIs</h3>
           <div class="kpi-grid" id="attendanceKpis"></div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:10px;">
+            Color coding: <span style="color:var(--success); font-weight:600;">green</span> = healthy ·
+            <span style="color:var(--warning); font-weight:600;">orange</span> = needs attention ·
+            black = neutral count, no threshold applied.
+          </div>
         </div>
 
         <div class="section-block">
@@ -1002,8 +1030,8 @@
               <div class="card-header"><div><div class="card-title">Absence by day of week</div><div class="card-subtitle">Sick + single-punch + absent combined</div></div></div>
               <div class="chart-wrap"><canvas id="chartAbsenceByDow"></canvas></div>
             </div>
-            <div class="card">
-              <div class="card-header"><div><div class="card-title">Monthly absence trend</div></div></div>
+            <div class="card" id="absenceTrendCard">
+              <div class="card-header"><div><div class="card-title">Monthly absence trend</div><div class="card-subtitle">Shown when the data covers more than one month</div></div></div>
               <div class="chart-wrap"><canvas id="chartAbsenceTrend"></canvas></div>
             </div>
           </div>
@@ -1031,6 +1059,17 @@
         <div class="section-block">
           <h3 class="section-heading">Engagement signals</h3>
           <div class="kpi-grid" id="behaviorKpis"></div>
+          <div class="card" style="margin-top:14px;">
+            <div class="card-header"><div><div class="card-title">How these signals are calculated</div></div></div>
+            <div style="font-size:12.5px; color:var(--text-muted); line-height:1.7;">
+              <strong style="color:var(--text);">Consistent under-hours</strong> — employees with 5 or more present days under the 9-hour target <em>and</em> an average working day below 9 hours.<br/>
+              <strong style="color:var(--text);">High remote (&gt;40%)</strong> — employees whose remote days are more than 40% of their working days (remote ÷ (present + remote)).<br/>
+              <strong style="color:var(--text);">Frequent STO</strong> — employees with 3 or more short-time-off uses in the selected range.<br/>
+              <strong style="color:var(--text);">Burnout risk</strong> — employees averaging over 10.5 working hours per present day who took zero annual leave in the range. In the table: <span class="pill danger">High</span> = average above 11h with no leave at all; <span class="pill warning">Medium</span> = average above 10.5h or 5+ days over 11h.<br/>
+              <strong style="color:var(--text);">Frequent adjustments</strong> — employees with 5 or more attendance adjustment requests.<br/>
+              All counts are <strong style="color:var(--text);">numbers of employees</strong>, not numbers of days or incidents.
+            </div>
+          </div>
         </div>
 
         <div class="section-block">
@@ -1038,7 +1077,8 @@
             <div class="card flush">
               <div class="card-head-block">
                 <div class="card-title">Consistent under-performers</div>
-                <div class="card-subtitle">≥ 5 present days under target hours</div>
+                <div class="card-subtitle">5+ days under 9h and average below 9h <button class="info-btn" type="button">i</button></div>
+                <div class="info-note" hidden>Employees, with their count of present days that came in under the 9-hour target. Only employees whose overall average is also below 9 hours are listed — a few short days with a 9h+ average does not flag anyone.</div>
               </div>
               <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 380px;">
                 <table class="data" id="underHoursTable">
@@ -1050,7 +1090,8 @@
             <div class="card flush">
               <div class="card-head-block">
                 <div class="card-title">High remote frequency</div>
-                <div class="card-subtitle">Top users by remote &amp; off-site days</div>
+                <div class="card-subtitle">Top 15 by remote days <button class="info-btn" type="button">i</button></div>
+                <div class="info-note" hidden>The 15 employees with the most remote-work days in the selected range. "% Present" = remote days as a share of their working days (remote &divide; (present + remote)) — above 40% counts toward the High Remote KPI.</div>
               </div>
               <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 380px;">
                 <table class="data" id="remoteTable">
@@ -1062,7 +1103,8 @@
             <div class="card flush">
               <div class="card-head-block">
                 <div class="card-title">Frequent short time off</div>
-                <div class="card-subtitle">Top STO users in selected period</div>
+                <div class="card-subtitle">Top 15 STO users in the selected period <button class="info-btn" type="button">i</button></div>
+                <div class="info-note" hidden>The 15 employees with the most short-time-off uses in the range (everyone with at least one use qualifies; sorted by number of uses). "Uses" counts occasions, "Total Hrs" is the summed duration. 3+ uses counts toward the Frequent STO KPI.</div>
               </div>
               <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 380px;">
                 <table class="data" id="stoTable">
@@ -1094,7 +1136,7 @@
           <h3 class="section-heading">Attendance adjustments</h3>
           <div class="card flush">
             <div class="card-head-block">
-              <div class="card-title">Top users of attendance adjustment requests</div>
+              <div class="card-title">Highest users of attendance adjustment requests</div>
               <div class="card-subtitle">May indicate punching habits or operational issues</div>
             </div>
             <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px;">
@@ -1969,13 +2011,23 @@ function renderAll() {
   renderAbsence(rows);
   renderBehavior(rows);
 }
-function kpiCard({label, value, sub, tone}) {
+function kpiCard({label, value, sub, tone, info}) {
   return `<div class="kpi ${tone||''}">
-    <div class="label">${label}</div>
+    <div class="label">${label}${info ? ' <button class="info-btn" type="button">i</button>' : ''}</div>
     <div class="value">${value}</div>
     ${sub ? `<div class="sub">${sub}</div>` : ''}
+    ${info ? `<div class="info-note" hidden>${info}</div>` : ''}
   </div>`;
 }
+
+// Info toggles: any ⓘ button shows/hides the nearest .info-note that follows it.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.info-btn');
+  if (!btn) return;
+  const host = btn.closest('.kpi') || btn.parentElement.parentElement;
+  const note = host ? host.querySelector('.info-note') : null;
+  if (note) note.hidden = !note.hidden;
+});
 
 /* ---------- Section 1: Executive ---------- */
 function renderExec(rows) {
@@ -2025,7 +2077,7 @@ function renderExec(rows) {
 
   const kpis = [];
   kpis.push(kpiCard({label:'Total Headcount', value: fmtNum(totalHC), sub: totalHCSub}));
-  kpis.push(kpiCard({label:'Avg Attendance', value: fmtPct(attendancePct), sub: `${presentDays} / ${scheduled.length} scheduled`, tone: attendancePct>=95?'success': attendancePct>=85?'':'warning'}));
+  kpis.push(kpiCard({label:'Avg Attendance', value: fmtPct(attendancePct), sub: `${presentDays} / ${scheduled.length} scheduled`, tone: attendancePct>=95?'success': attendancePct>=85?'':'warning', info:'Present days ÷ scheduled workdays across everyone in range. Scheduled workdays exclude weekly offs and holidays, so this reads: of the days people were expected in, the share they actually attended.'}));
   kpis.push(kpiCard({label:'Avg Working Hours', value: fmtHrs(avgWorkMin), sub: 'across present days'}));
   kpis.push(kpiCard({label:'Late Arrivals', value: fmtNum(lateCount), sub: `${lateEmployees} employee${lateEmployees===1?'':'s'} · after 09:00`, tone: lateCount>0?'warning':''}));
   kpis.push(kpiCard({label:'< 9 Hr Days', value: fmtNum(under9Days), sub: 'below target', tone: under9Days>0?'warning':''}));
@@ -2110,15 +2162,13 @@ function isMale(s) { const v = String(s||''); return /male/i.test(v) && !/female
 function renderWorkforce(/* attendance rows — not used here */) {
   const emptyEl = document.getElementById('workforceEmpty');
   const contentEl = document.getElementById('workforceContent');
-  const workforceChartIds = ['chartHcByMonth','chartJoinersByMonth','chartWfDept','chartHcByLevel','chartWfDesignation','chartWfNationality','chartWfGender','chartLeadership','chartGenderByDept','chartFemaleTrend','chartWfTenure','chartLeaversByMonth','chartLeaversByReason','chartAgeGroups'];
+  const workforceChartIds = ['chartHcByMonth','chartJoinersByMonth','chartWfDept','chartHcByLevel','chartWfDesignation','chartWfNationality','chartWfGender','chartLeadership','chartGenderByDept','chartFemaleTrend','chartHcByQuarter','chartFemaleQuarter','chartWfTenure','chartLeaversByMonth','chartLeaversByReason','chartAgeGroups'];
 
   if (!State.master.length) {
     emptyEl.classList.remove('hidden');
     contentEl.classList.add('hidden');
     workforceChartIds.forEach(id => { if (State.charts[id]) { State.charts[id].destroy(); delete State.charts[id]; } });
-    document.querySelector('#spanOfControlTable tbody').innerHTML = '';
     document.getElementById('workforceKpis').innerHTML = '';
-    document.getElementById('orgMetrics').innerHTML = '';
     return;
   }
   emptyEl.classList.add('hidden');
@@ -2196,9 +2246,11 @@ function renderWorkforce(/* attendance rows — not used here */) {
   // probation on 31 Jul.
   const probRef = periodEndDay;
   const probRefLabel = periodLabel;
-  // Still on probation as at probRef = joined less than 90 days before that date
-  const probationCutoff = new Date(probRef.getTime() - 90 * 86400000);
-  const underProbation = mEmps.filter(m => m.doj > probationCutoff).length;
+  // Probation = 3 CALENDAR MONTHS from date of joining; the last probation day is the day before
+  // the 3-month anniversary (joined 1 Jun -> probation ends 31 Aug). Someone whose probation ends
+  // ON the period end day is still on probation for that report (>=, not >).
+  const probationEnd = (doj) => { const d = new Date(doj.getFullYear(), doj.getMonth()+3, doj.getDate()); d.setDate(d.getDate()-1); return d; };
+  const underProbation = mEmps.filter(m => m.doj && probationEnd(m.doj) >= probRef).length;
 
   document.getElementById('workforceKpis').innerHTML = [
     kpiCard({label:'Total Headcount', value: fmtNum(totalHC), sub: `active as at ${periodLabel}`}),
@@ -2208,11 +2260,19 @@ function renderWorkforce(/* attendance rows — not used here */) {
     kpiCard({label:'Nationalities', value: fmtNum(natSet.size)}),
     kpiCard({label:'Avg Tenure', value: avgTenure.toFixed(1)+' yrs', sub: 'since joining'}),
     kpiCard({label:'New Joiners (Month)', value: fmtNum(newJoinersThisMonth), sub: monthStart.toLocaleString('en',{month:'short',year:'numeric'})}),
-    kpiCard({label:'Under Probation', value: fmtNum(underProbation), sub: `as at ${probRefLabel} (90 days from joining)`, tone: underProbation>0?'warning':''}),
+    kpiCard({label:'Under Probation', value: fmtNum(underProbation), sub: `as at ${probRefLabel} (3 months from joining)`, tone: underProbation>0?'warning':'', info:'Employees whose 3-calendar-month probation (last day = the day before the 3-month joining anniversary) has not finished by the report period end. Matches the Probation table below.'}),
   ].join('');
 
-  /* ---------- Trends: HC by month + Joiners by month + Female trend ---------- */
-  const allDojs = mEmps.map(m => m.doj).sort((a,b) => a-b);
+  /* ---------- Trends: HC by month/quarter + Joiners + Female trend ---------- */
+  // History base: the dept/employee-filtered master INCLUDING leavers, so past months count the
+  // people who were active then but have since left. The final point (the report month) equals
+  // Total Headcount, because activeAt(periodEnd) is exactly the mEmps filter.
+  let histEmps = State.master.filter(m => m.doj);
+  if (State.filters.dept !== 'all') histEmps = histEmps.filter(m => m.dept === State.filters.dept);
+  if (State.filters.employee !== 'all') histEmps = histEmps.filter(m => String(m.empId) === String(State.filters.employee));
+  const activeAt = (d) => histEmps.filter(m => m.doj <= d && (!m.leaverDate || m.leaverDate > d));
+
+  const allDojs = histEmps.map(m => m.doj).sort((a,b) => a-b);
   if (allDojs.length) {
     const firstMonth = new Date(allDojs[0].getFullYear(), allDojs[0].getMonth(), 1);
     const lastMonth = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
@@ -2220,24 +2280,21 @@ function renderWorkforce(/* attendance rows — not used here */) {
     const cur = new Date(firstMonth);
     while (cur <= lastMonth) { months.push(new Date(cur)); cur.setMonth(cur.getMonth()+1); }
     const monthLabels = months.map(d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'));
+    const monthEndOf = (ms) => new Date(ms.getFullYear(), ms.getMonth()+1, 0, 23, 59, 59, 999);
 
-    const hcByMonth = months.map(ms => {
-      const me = new Date(ms.getFullYear(), ms.getMonth()+1, 0); // last day of month
-      return mEmps.filter(m => m.doj <= me).length;
-    });
+    const hcByMonth = months.map(ms => activeAt(monthEndOf(ms)).length);
     drawLine('chartHcByMonth', monthLabels, [
-      { label: 'Cumulative HC', data: hcByMonth, color: COLORS.primary, fill: true }
-    ]);
+      { label: 'Active HC', data: hcByMonth, color: COLORS.primary, fill: true }
+    ], { valueLabels: true });
 
     const joinersByMonth = months.map(ms => {
       const next = new Date(ms.getFullYear(), ms.getMonth()+1, 1);
-      return mEmps.filter(m => m.doj >= ms && m.doj < next).length;
+      return histEmps.filter(m => m.doj >= ms && m.doj < next).length;
     });
-    drawBar('chartJoinersByMonth', monthLabels, joinersByMonth, 'Joiners');
+    drawBar('chartJoinersByMonth', monthLabels, joinersByMonth, 'Joiners', { autoSkip: true, maxTicksLimit: 24 });
 
     const femaleTrend = months.map(ms => {
-      const me = new Date(ms.getFullYear(), ms.getMonth()+1, 0);
-      const active = mEmps.filter(m => m.doj <= me);
+      const active = activeAt(monthEndOf(ms));
       const f = active.filter(m => isFemale(m.gender)).length;
       const ml = active.filter(m => isMale(m.gender)).length;
       return (f+ml) ? +(f/(f+ml)*100).toFixed(1) : 0;
@@ -2245,16 +2302,37 @@ function renderWorkforce(/* attendance rows — not used here */) {
     drawLine('chartFemaleTrend', monthLabels, [
       { label: 'Female %', data: femaleTrend, color: COLORS.pink, fill: true }
     ]);
+
+    // Quarterly views — measured at each quarter end; the current (report) quarter is measured
+    // at the report period end since the quarter hasn't closed yet.
+    const qEnds = [];
+    let q = new Date(firstMonth.getFullYear(), Math.floor(firstMonth.getMonth()/3)*3 + 3, 0);
+    const lastQEnd = new Date(asOf.getFullYear(), Math.floor(asOf.getMonth()/3)*3 + 3, 0);
+    while (q <= lastQEnd) { qEnds.push(new Date(q)); q = new Date(q.getFullYear(), q.getMonth()+4, 0); }
+    const qLabels = qEnds.map(d => 'Q' + (Math.floor(d.getMonth()/3)+1) + ' ' + d.getFullYear());
+    const qMeasure = (d) => (d <= periodEnd ? new Date(d.getFullYear(), d.getMonth()+1, 0, 23,59,59,999) : periodEnd);
+
+    drawBar('chartHcByQuarter', qLabels, qEnds.map(d => activeAt(qMeasure(d)).length), 'Headcount',
+      { autoSkip: true, maxTicksLimit: 16, valueLabels: true });
+
+    const femaleByQuarter = qEnds.map(d => {
+      const active = activeAt(qMeasure(d));
+      const f = active.filter(m => isFemale(m.gender)).length;
+      const ml = active.filter(m => isMale(m.gender)).length;
+      return (f+ml) ? +(f/(f+ml)*100).toFixed(1) : 0;
+    });
+    drawBar('chartFemaleQuarter', qLabels, femaleByQuarter, 'Female %',
+      { autoSkip: true, maxTicksLimit: 16, valueLabels: true, suffix: '%', color: COLORS.pink });
   }
 
   /* ---------- Distribution charts ---------- */
   const byDept = groupBy(mEmps, m => m.dept || 'Unassigned');
   const deptNames = Object.keys(byDept).sort();
-  drawBar('chartWfDept', deptNames, deptNames.map(d => byDept[d].length), 'Headcount');
+  drawBar('chartWfDept', deptNames, deptNames.map(d => byDept[d].length), 'Headcount', { valueLabels: true });
 
   const byLevel = groupBy(mEmps, m => m.contribLevel || 'Unknown');
   const levelLabels = Object.keys(byLevel);
-  drawPie('chartHcByLevel', levelLabels, levelLabels.map(k => byLevel[k].length));
+  drawPie('chartHcByLevel', levelLabels, levelLabels.map(k => byLevel[k].length), { valueLabels: true });
 
   const byDes = groupBy(mEmps, m => m.designation || 'Unknown');
   const desEntries = Object.entries(byDes).sort((a,b) => b[1].length - a[1].length).slice(0, 15);
@@ -2266,12 +2344,12 @@ function renderWorkforce(/* attendance rows — not used here */) {
   drawBar('chartWfNationality', natTop.map(n=>n[0]), natTop.map(n=>n[1]), 'Employees', { horizontal: true });
 
   /* ---------- Diversity ---------- */
-  drawPie('chartWfGender', ['Male','Female'], [male, female]);
+  drawPie('chartWfGender', ['Male','Female'], [male, female], { valueLabels: true });
 
   const leadership = mEmps.filter(m => LEADERSHIP_RE.test(m.designation));
   const ldMale = leadership.filter(m => isMale(m.gender)).length;
   const ldFemale = leadership.filter(m => isFemale(m.gender)).length;
-  drawPie('chartLeadership', ['Male','Female'], [ldMale, ldFemale]);
+  drawPie('chartLeadership', ['Male','Female'], [ldMale, ldFemale], { valueLabels: true });
 
   const genderByDept = deptNames.map(d => {
     const emps = byDept[d];
@@ -2312,7 +2390,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
 
   document.getElementById('lifeStageKpis').innerHTML = [
     kpiCard({label:'Average Age', value: avgAge > 0 ? avgAge.toFixed(1)+' yrs' : '–'}),
-    kpiCard({label:'Birthdays (30d)', value: fmtNum(upcoming.length), sub: upcoming.length ? `next: ${upcoming[0].m.fullName.split(' ')[0]} in ${upcoming[0].daysAway}d` : `as of ${toInputDate(today)}`}),
+    kpiCard({label:'Birthdays (30d)', value: fmtNum(upcoming.length), sub: `as of ${toInputDate(today)}`}),
   ].join('');
 
   if (ages.length) {
@@ -2337,6 +2415,24 @@ function renderWorkforce(/* attendance rows — not used here */) {
     bdayTbody.innerHTML = emptyRow(4);
   }
 
+  /* ---------- Birthdays in the report month ---------- */
+  // Everyone whose birthday falls in the month of this master report, with the age they turn.
+  const repMonthDate = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
+  const monthBdays = mEmps.filter(m => m.dob && m.dob.getMonth() === asOf.getMonth())
+    .map(m => ({ m, day: m.dob.getDate(), turning: asOf.getFullYear() - m.dob.getFullYear() }))
+    .sort((a,b) => a.day - b.day);
+  const mbTitle = document.getElementById('monthBirthdaysTitle');
+  if (mbTitle) mbTitle.textContent = `Birthdays in ${repMonthDate.toLocaleString('en',{month:'long',year:'numeric'})}`;
+  const mbTbody = document.querySelector('#monthBirthdaysTable tbody');
+  if (mbTbody) {
+    mbTbody.innerHTML = monthBdays.length ? monthBdays.map(u => `<tr>
+      <td><strong>${escapeHtml(u.m.fullName)}</strong></td>
+      <td>${escapeHtml(u.m.dept || '–')}</td>
+      <td class="num">${u.day} ${repMonthDate.toLocaleString('en',{month:'short'})}</td>
+      <td class="num">${u.turning}</td>
+    </tr>`).join('') : emptyRow(4);
+  }
+
   /* ---------- Tenure distribution (spec: <1, 1-2, 2-3, 3-4, 4+) ---------- */
   const tenBands = { '<1 yr':0, '1-2':0, '2-3':0, '3-4':0, '4+':0 };
   mEmps.forEach(m => {
@@ -2350,22 +2446,21 @@ function renderWorkforce(/* attendance rows — not used here */) {
   drawBar('chartWfTenure', Object.keys(tenBands), Object.values(tenBands), 'Employees');
 
   /* ---------- Probation table ---------- */
-  // Days-left is measured against probRef (last day of the report month), NOT today. Re-opening a
-  // July report in August still shows who was on probation on 31 Jul, with the days they had left
-  // at that point.
+  // Measured against probRef (last day of the report month), NOT today. Probation is 3 calendar
+  // months from joining; daysLeft 0 = the period end IS their last probation day (still shown).
   const probEmps = mEmps
     .filter(m => m.doj)
     .map(m => {
-      const endDate = new Date(m.doj.getTime() + 90 * 86400000);
+      const endDate = probationEnd(m.doj);
       const daysLeft = Math.ceil((endDate - probRef) / 86400000);
       return { m, endDate, daysLeft };
     })
-    .filter(x => x.daysLeft > 0)
+    .filter(x => x.daysLeft >= 0)
     .sort((a,b) => a.daysLeft - b.daysLeft);
   const probTitleEl = document.getElementById('probationTitle');
   const probSubEl = document.getElementById('probationSubtitle');
   if (probTitleEl) probTitleEl.textContent = `Employees on probation as at ${probRefLabel}`;
-  if (probSubEl) probSubEl.textContent = `Probation is 90 days from date of joining, assessed at the end of the report month (${probRefLabel}) — not today. Ordered by days remaining at that date.`;
+  if (probSubEl) probSubEl.textContent = `Probation is 3 calendar months from date of joining (ends the day before the 3-month anniversary), assessed at the end of the report month (${probRefLabel}) — not today. Ordered by days remaining at that date.`;
 
   const probTbody = document.querySelector('#probationTable tbody');
   if (probEmps.length) {
@@ -2377,7 +2472,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
         <td>${escapeHtml(x.m.designation || '–')}</td>
         <td class="num">${fmtDate(x.m.doj)}</td>
         <td class="num">${fmtDate(x.endDate)}</td>
-        <td class="num"><span class="pill ${pill}">${x.daysLeft} day${x.daysLeft===1?'':'s'}</span></td>
+        <td class="num"><span class="pill ${pill}">${x.daysLeft === 0 ? 'last day' : x.daysLeft + ' day' + (x.daysLeft===1?'':'s')}</span></td>
       </tr>`;
     }).join('');
   } else {
@@ -2417,7 +2512,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
   const emiratiPct = mEmps.length ? (emiratiCount/mEmps.length)*100 : 0;
 
   document.getElementById('diversityScorecard').innerHTML = [
-    kpiCard({label:'Diversity Index', value: diversityIdx.toFixed(2), sub:"Simpson's (0 = uniform, 1 = max diverse)"}),
+    kpiCard({label:'Diversity Index', value: diversityIdx.toFixed(2), sub:"Simpson's index", info:'Simpson&#39;s Diversity Index over nationalities: the probability that two randomly picked employees have different nationalities. 0 = everyone shares one nationality; closer to 1 = headcount spread evenly across many nationalities. Example: 0.80 means an 80% chance two random colleagues differ in nationality.'}),
     kpiCard({label:'Nationalities', value: fmtNum(Object.keys(natCounts2).length)}),
     kpiCard({label:'Emirati Headcount', value: fmtNum(emiratiCount), tone: emiratiCount>0?'success':''}),
     kpiCard({label:'Emirati % Staff', value: fmtPct(emiratiPct), sub: `${emiratiCount} of ${mEmps.length}`}),
@@ -2504,26 +2599,6 @@ function renderWorkforce(/* attendance rows — not used here */) {
     }
   }
 
-  /* ---------- Org structure ---------- */
-  const byMgr = groupBy(mEmps, m => m.manager || 'Unassigned');
-  const mgrEntries = Object.entries(byMgr).sort((a,b) => b[1].length - a[1].length);
-  document.querySelector('#spanOfControlTable tbody').innerHTML = mgrEntries.map(([mgr, emps]) => {
-    const depts = Array.from(new Set(emps.map(e => e.dept).filter(Boolean))).sort().join(', ');
-    return `<tr><td><strong>${escapeHtml(mgr)}</strong></td><td class="num">${emps.length}</td><td>${escapeHtml(depts)}</td></tr>`;
-  }).join('') || emptyRow(3);
-
-  const teamSizes = mgrEntries.map(([_, emps]) => emps.length);
-  const avgTeam = teamSizes.length ? teamSizes.reduce((s,v)=>s+v,0)/teamSizes.length : 0;
-  const maxTeam = teamSizes.length ? Math.max(...teamSizes) : 0;
-  const soloMgrs = teamSizes.filter(s => s === 1).length;
-  document.getElementById('orgMetrics').innerHTML = `
-    <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 4px;">
-      <div><div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600;">Avg team size</div><div style="font-size:22px; font-weight:600; margin-top:4px; letter-spacing:-0.01em;">${avgTeam.toFixed(1)}</div></div>
-      <div><div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600;">Largest team</div><div style="font-size:22px; font-weight:600; margin-top:4px; letter-spacing:-0.01em;">${maxTeam}</div></div>
-      <div><div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600;">Distinct managers</div><div style="font-size:22px; font-weight:600; margin-top:4px; letter-spacing:-0.01em;">${mgrEntries.length}</div></div>
-      <div><div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600;">Managers w/ 1 report</div><div style="font-size:22px; font-weight:600; margin-top:4px; letter-spacing:-0.01em;">${soloMgrs}</div></div>
-    </div>
-  `;
 }
 
 /* ---------- Section 3: Attendance ---------- */
@@ -2542,9 +2617,9 @@ function renderAttendance(rows) {
   const lateEmployees = new Set(rows.filter(r => r.isLate).map(r => r.empId)).size;
 
   document.getElementById('attendanceKpis').innerHTML = [
-    kpiCard({label:'Attendance %', value: fmtPct(att), tone: att>=95?'success':att>=85?'':'warning'}),
+    kpiCard({label:'Attendance %', value: fmtPct(att), sub: `${present.length} of ${scheduled.length} scheduled days`, tone: att>=95?'success':att>=85?'':'warning', info:'Present days ÷ scheduled workdays, across everyone in the selected range. A scheduled workday excludes weekly offs, public holidays — so 74% means people clocked in on 74% of the days they were expected at work. 95%+ shows green; below 85% shows orange.'}),
     kpiCard({label:'Avg Working Hours', value: fmtHrs(avgHrs)}),
-    kpiCard({label:'Late Arrivals', value: fmtNum(lateDays), sub: `${lateEmployees} employee${lateEmployees===1?'':'s'} · after 09:00`}),
+    kpiCard({label:'Late Arrivals', value: fmtNum(lateDays), sub: `${lateEmployees} employee${lateEmployees===1?'':'s'} · after 09:00`, tone: lateDays>0?'warning':''}),
     kpiCard({label:'< 9 Hr Days', value: fmtNum(under9), tone: under9>0?'warning':''}),
     kpiCard({label:'Remote Days', value: fmtNum(remote)}),
     kpiCard({label:'Off-Site Days', value: fmtNum(offsite)}),
@@ -2663,13 +2738,21 @@ function renderAbsence(rows) {
     if ((r.isAbsent || r.isSinglePunch) && !r.isSick && !r.isAnyLeave && !r.isWeeklyOff && !r.isHoliday) byMonth[k].absent++;
   });
   const months = Object.keys(byMonth).sort();
-  drawLine('chartAbsenceTrend', months, [
-    { label:'Occasional Sick', data: months.map(m=>byMonth[m].occ),        color: COLORS.amber },
-    { label:'Short Sick',      data: months.map(m=>byMonth[m].short),      color: COLORS.red },
-    { label:'Annual',          data: months.map(m=>byMonth[m].annual),     color: COLORS.primary },
-    { label:'Other Leave',     data: months.map(m=>byMonth[m].otherLeave), color: COLORS.violet },
-    { label:'Unscheduled',     data: months.map(m=>byMonth[m].absent),     color: COLORS.slate },
-  ]);
+  // A one-month trend is a single dot — only show this card when the data spans 2+ months.
+  const trendCard = document.getElementById('absenceTrendCard');
+  if (months.length > 1) {
+    if (trendCard) trendCard.style.display = '';
+    drawLine('chartAbsenceTrend', months, [
+      { label:'Occasional Sick', data: months.map(m=>byMonth[m].occ),        color: COLORS.amber },
+      { label:'Short Sick',      data: months.map(m=>byMonth[m].short),      color: COLORS.red },
+      { label:'Annual',          data: months.map(m=>byMonth[m].annual),     color: COLORS.primary },
+      { label:'Other Leave',     data: months.map(m=>byMonth[m].otherLeave), color: COLORS.violet },
+      { label:'Unscheduled',     data: months.map(m=>byMonth[m].absent),     color: COLORS.slate },
+    ]);
+  } else {
+    if (trendCard) trendCard.style.display = 'none';
+    destroyIfExists('chartAbsenceTrend');
+  }
 
   const sickTbody = document.querySelector('#frequentSickTable tbody');
   if (repeatSick.length) {
@@ -2708,7 +2791,10 @@ function renderBehavior(rows) {
   });
   const allEmps = Object.values(byEmp);
 
-  const consUnder = allEmps.filter(e => e.under9 >= 5).length;
+  // Flag only people who are genuinely short overall: 5+ days under target AND average < 9h.
+  // Someone with a few short days but a 9h+ overall average is not an under-performer.
+  const isConsUnder = (e) => { const avg = e.presentDays ? e.totalMin/e.presentDays : 0; return e.under9 >= 5 && avg < 9*60; };
+  const consUnder = allEmps.filter(isConsUnder).length;
   const highRemote = allEmps.filter(e => e.presentDays > 0 && e.remote/(e.presentDays+e.remote) > 0.4).length;
   const freqSto = allEmps.filter(e => e.sto >= 3).length;
   const burnout = allEmps.filter(e => { const avg = e.presentDays ? e.totalMin/e.presentDays : 0; return avg > 10.5*60 && e.annual === 0; }).length;
@@ -2716,15 +2802,15 @@ function renderBehavior(rows) {
   const totalAdj = allEmps.reduce((s,e)=>s+e.adjustments,0);
 
   document.getElementById('behaviorKpis').innerHTML = [
-    kpiCard({label:'Consistent Under-Hours', value: fmtNum(consUnder), sub:'≥ 5 days under target', tone: consUnder>0?'warning':''}),
-    kpiCard({label:'High Remote (&gt;40%)', value: fmtNum(highRemote)}),
-    kpiCard({label:'Frequent STO (3+)', value: fmtNum(freqSto)}),
-    kpiCard({label:'Burnout Risk', value: fmtNum(burnout), tone: burnout>0?'danger':''}),
-    kpiCard({label:'Frequent Adj. (5+)', value: fmtNum(freqAdj), tone: freqAdj>0?'warning':''}),
-    kpiCard({label:'Total Adjustments', value: fmtNum(totalAdj)}),
+    kpiCard({label:'Consistent Under-Hours', value: fmtNum(consUnder), sub:'employees', tone: consUnder>0?'warning':'', info:'Number of employees with 5 or more present days under the 9-hour target whose average working day is also below 9 hours.'}),
+    kpiCard({label:'High Remote (&gt;40%)', value: fmtNum(highRemote), sub:'employees', info:'Number of employees whose remote days are more than 40% of their working days (remote ÷ (present + remote)).'}),
+    kpiCard({label:'Frequent STO (3+)', value: fmtNum(freqSto), sub:'employees', info:'Number of employees with 3 or more short-time-off uses in the selected range.'}),
+    kpiCard({label:'Burnout Risk', value: fmtNum(burnout), sub:'employees', tone: burnout>0?'danger':'', info:'Number of employees averaging over 10.5 working hours per present day who took zero annual leave in the range.'}),
+    kpiCard({label:'Frequent Adj. (5+)', value: fmtNum(freqAdj), sub:'employees', tone: freqAdj>0?'warning':'', info:'Number of employees who filed 5 or more attendance adjustment requests in the range.'}),
+    kpiCard({label:'Total Adjustments', value: fmtNum(totalAdj), sub:'requests (not employees)', info:'Total attendance adjustment requests across everyone — the one number here that counts requests rather than employees.'}),
   ].join('');
 
-  const under = allEmps.filter(e => e.under9 >= 5).sort((a,b)=>b.under9-a.under9).slice(0,50);
+  const under = allEmps.filter(isConsUnder).sort((a,b)=>b.under9-a.under9).slice(0,50);
   document.querySelector('#underHoursTable tbody').innerHTML = under.map(e => {
     const avg = e.presentDays ? (e.totalMin/e.presentDays/60).toFixed(2) : '–';
     return `<tr><td><strong>${escapeHtml(e.name)}</strong></td><td>${escapeHtml(e.dept)}</td><td class="num">${e.under9}</td><td class="num">${avg}h</td></tr>`;
@@ -2803,6 +2889,56 @@ const baseTooltipOpts = {
   displayColors: true,
 };
 
+// Draws the value of each bar / point / slice directly on the chart.
+// Enabled per chart via options.plugins.valueLabels = { display:true, suffix }.
+const valueLabelPlugin = {
+  id: 'valueLabels',
+  afterDatasetsDraw(chart) {
+    const cfg = chart.options.plugins && chart.options.plugins.valueLabels;
+    if (!cfg || !cfg.display) return;
+    const { ctx } = chart;
+    ctx.save();
+    ctx.font = '600 10px ' + (Chart.defaults.font.family || 'sans-serif');
+    ctx.fillStyle = '#475569';
+    const type = chart.config.type;
+    const horizontal = chart.options.indexAxis === 'y';
+    chart.data.datasets.forEach((ds, di) => {
+      const meta = chart.getDatasetMeta(di);
+      if (meta.hidden) return;
+      const n = meta.data.length;
+      // Thin out labels on dense line charts so they stay readable
+      const step = (type === 'line' && n > 24) ? Math.ceil(n / 24) : 1;
+      meta.data.forEach((el, i) => {
+        const v = ds.data[i];
+        if (v === null || v === undefined) return;
+        if (type === 'line' && i % step !== 0 && i !== n - 1) return;
+        if ((type === 'doughnut' || type === 'pie') && !v) return;
+        const label = String(v) + (cfg.suffix || '');
+        if (type === 'doughnut' || type === 'pie') {
+          const pos = el.tooltipPosition();
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#fff';
+          ctx.font = '600 11px ' + (Chart.defaults.font.family || 'sans-serif');
+          ctx.fillText(label, pos.x, pos.y);
+          ctx.fillStyle = '#475569';
+        } else if (horizontal) {
+          ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.fillText(label, el.x + 4, el.y);
+        } else {
+          ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+          ctx.fillText(label, el.x, el.y - 3);
+        }
+      });
+    });
+    ctx.restore();
+  }
+};
+Chart.register(valueLabelPlugin);
+
+// Charts render at screen width; when printing, re-fit them to the page and restore after.
+window.addEventListener('beforeprint', () => { Object.values(State.charts).forEach(c => { try { c.resize(); } catch(e){} }); });
+window.addEventListener('afterprint',  () => { Object.values(State.charts).forEach(c => { try { c.resize(); } catch(e){} }); });
+
 function drawBar(canvasId, labels, data, dsLabel, opts = {}) {
   destroyIfExists(canvasId);
   const ctx = document.getElementById(canvasId).getContext('2d');
@@ -2819,7 +2955,8 @@ function drawBar(canvasId, labels, data, dsLabel, opts = {}) {
     ticks: {
       font: { size: 11 },
       color: '#64748b',
-      autoSkip: false,
+      autoSkip: !!opts.autoSkip,
+      maxTicksLimit: opts.maxTicksLimit,
       maxRotation: horizontal ? 0 : 45,
       minRotation: 0,
       callback: function(val) {
@@ -2863,8 +3000,10 @@ function drawBar(canvasId, labels, data, dsLabel, opts = {}) {
       maintainAspectRatio: false,
       indexAxis: horizontal ? 'y' : 'x',
       scales,
+      layout: opts.valueLabels && !horizontal ? { padding: { top: 14 } } : undefined,
       plugins: {
         legend: { display: false },
+        valueLabels: { display: !!opts.valueLabels, suffix: opts.suffix || '' },
         tooltip: {
           ...baseTooltipOpts,
           callbacks: {
@@ -2877,7 +3016,7 @@ function drawBar(canvasId, labels, data, dsLabel, opts = {}) {
   });
 }
 
-function drawLine(canvasId, labels, datasets) {
+function drawLine(canvasId, labels, datasets, opts = {}) {
   destroyIfExists(canvasId);
   const ctx = document.getElementById(canvasId).getContext('2d');
   const tickCount = labels.length;
@@ -2926,13 +3065,15 @@ function drawLine(canvasId, labels, datasets) {
           display: true, position: 'top', align: 'end',
           labels: { boxWidth: 10, boxHeight: 10, font: { size: 12 }, color: '#475569', usePointStyle: true, pointStyle: 'circle' }
         },
+        valueLabels: { display: !!opts.valueLabels, suffix: opts.suffix || '' },
         tooltip: baseTooltipOpts,
-      }
+      },
+      layout: opts.valueLabels ? { padding: { top: 14 } } : undefined,
     }
   });
 }
 
-function drawPie(canvasId, labels, data) {
+function drawPie(canvasId, labels, data, opts = {}) {
   destroyIfExists(canvasId);
   const ctx = document.getElementById(canvasId).getContext('2d');
   State.charts[canvasId] = new Chart(ctx, {
@@ -2947,6 +3088,7 @@ function drawPie(canvasId, labels, data) {
       cutout: '62%',
       plugins: {
         legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 12 }, color: '#475569', usePointStyle: true, pointStyle: 'circle' } },
+        valueLabels: { display: !!opts.valueLabels, suffix: opts.suffix || '' },
         tooltip: baseTooltipOpts,
       }
     }
