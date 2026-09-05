@@ -568,6 +568,10 @@
     thead { display: table-header-group; }
     /* Charts must never overflow the printable width */
     canvas { max-width: 100% !important; }
+    /* Probation prints as one unit — heading, card and table together on the same page */
+    #probationSection, #probationSection .card.flush { break-inside: avoid !important; page-break-inside: avoid !important; }
+    /* Leavers & Turnover is its own story: start it on a fresh page and keep KPIs + charts together */
+    #wfLeaversSection { break-before: page; page-break-before: always; break-inside: avoid; page-break-inside: avoid; }
     .tab-content { display: none !important; }
     .tab-content.active { display: block !important; }
     .table-wrap.scroll { max-height: none !important; overflow: visible !important; }
@@ -926,11 +930,11 @@
             <div class="card flush" style="margin-top: 16px;">
               <div class="card-head-block">
                 <div class="card-title">Recent leavers</div>
-                <div class="card-subtitle">Within the selected date range</div>
+                <div class="card-subtitle">All leavers up to the report period end · most recent first</div>
               </div>
               <div class="table-wrap scroll" style="border: none; border-radius: 0 0 10px 10px; max-height: 360px;">
                 <table class="data" id="leaversTable">
-                  <thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th class="num">Exit Date</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+                  <thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th class="num">Exit Date</th><th class="num">Notice</th><th class="num">Notice Ends</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
                   <tbody></tbody>
                 </table>
               </div>
@@ -2139,6 +2143,15 @@ function renderExec(rows) {
 }
 
 /* ---------- Section 2: Workforce ---------- */
+// Notice period by seniority: Heads / Directors and above serve 3 months; Assistant Manager,
+// Manager and Senior Manager serve 2; everyone else serves 1. Notice runs from the Leavers Date.
+function noticeMonthsFor(designation) {
+  const d = String(designation || '');
+  if (LEADERSHIP_RE.test(d)) return 3;
+  if (/\bmanager\b/i.test(d)) return 2;
+  return 1;
+}
+
 // Leadership = Head, Associate Director, Director, Senior Director, VP, SVP, Chief
 // "Associate Director" and "Senior Director" both contain "Director" so the \bdirector\b
 // pattern matches all three. \b ensures we don't match substrings inside other words.
@@ -2202,10 +2215,11 @@ function renderWorkforce(/* attendance rows — not used here */) {
   if (State.filters.dept !== 'all') mEmps = mEmps.filter(m => m.dept === State.filters.dept);
   if (State.filters.employee !== 'all') mEmps = mEmps.filter(m => String(m.empId) === String(State.filters.employee));
 
-  // Leavers within the selected date range (from → to). If no `from`, treat as "all-time up to the
-  // period end". Leaving on the last day of the month counts as a leaver for that month.
-  const fromD = State.filters.from || new Date(1900, 0, 1);
-  let leavers = State.master.filter(m => m.leaverDate && m.leaverDate >= fromD && m.leaverDate <= periodEnd);
+  // ALL leavers up to the period end. The attendance date filter must NOT hide these: a June
+  // leaver reported in the August master file still belongs in the August report's leaver
+  // history (HRIS often records the exit only once the notice period settles). Leaving on the
+  // last day of the month counts as a leaver for that month.
+  let leavers = State.master.filter(m => m.leaverDate && m.leaverDate <= periodEnd);
   if (State.filters.dept !== 'all') leavers = leavers.filter(m => m.dept === State.filters.dept);
   if (State.filters.employee !== 'all') leavers = leavers.filter(m => String(m.empId) === String(State.filters.employee));
 
@@ -2328,7 +2342,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
   const natCount = {};
   mEmps.forEach(m => { if (m.nationality) natCount[m.nationality] = (natCount[m.nationality]||0)+1; });
   const natTop = Object.entries(natCount).sort((a,b)=>b[1]-a[1]).slice(0, 10);
-  drawBar('chartWfNationality', natTop.map(n=>n[0]), natTop.map(n=>n[1]), 'Employees', { horizontal: true });
+  drawBar('chartWfNationality', natTop.map(n=>n[0]), natTop.map(n=>n[1]), 'Employees', { horizontal: true, valueLabels: true });
 
   /* ---------- Diversity ---------- */
   drawPie('chartWfGender', ['Male','Female'], [male, female], { valueLabels: true });
@@ -2348,7 +2362,7 @@ function renderWorkforce(/* attendance rows — not used here */) {
   drawStackedBar('chartGenderByDept', deptNames, [
     { label: 'Male',   data: genderByDept.map(g => g.male),   color: COLORS.primary },
     { label: 'Female', data: genderByDept.map(g => g.female), color: COLORS.pink },
-  ]);
+  ], { valueLabels: true });
 
   /* ---------- Life stage: age groups, avg age, birthdays ---------- */
   const ages = mEmps.filter(m => m.dob).map(m => (todayRef - m.dob)/(1000*60*60*24*365.25));
@@ -2497,14 +2511,10 @@ function renderWorkforce(/* attendance rows — not used here */) {
     if (leaversSection) leaversSection.style.display = '';
 
     const totalLeavers = leavers.length;
+    const leaversThisMonth = leavers.filter(m => m.leaverDate >= monthStart);
     // Avg tenure at exit (years)
     const leaverTenures = leavers.filter(m => m.doj && m.leaverDate).map(m => (m.leaverDate - m.doj)/(1000*60*60*24*365));
     const avgLeaverTenure = leaverTenures.length ? leaverTenures.reduce((s,v)=>s+v,0)/leaverTenures.length : 0;
-    // Turnover % = leavers in period / avg of (active at start, active at end)
-    const startActive = State.master.filter(m => m.doj && m.doj <= fromD && (!m.leaverDate || m.leaverDate > fromD)).length;
-    const endActive = mEmps.length;
-    const avgActive = (startActive + endActive) / 2 || 1;
-    const turnoverPct = (totalLeavers / avgActive) * 100;
     // Top exit reason
     const reasonCount = {};
     leavers.forEach(m => { if (m.leaverReason) reasonCount[m.leaverReason] = (reasonCount[m.leaverReason]||0) + 1; });
@@ -2512,8 +2522,8 @@ function renderWorkforce(/* attendance rows — not used here */) {
     const topReason = reasonEntries[0] ? reasonEntries[0][0] : '–';
 
     document.getElementById('leaverKpis').innerHTML = [
-      kpiCard({label:'Leavers (in range)', value: fmtNum(totalLeavers), sub: totalLeavers ? `${reasonEntries.length} distinct reasons` : 'none in range', tone: totalLeavers>0?'warning':''}),
-      kpiCard({label:'Turnover %', value: fmtPct(turnoverPct), sub: `vs avg active ${Math.round(avgActive)}`, tone: turnoverPct>10?'danger':turnoverPct>5?'warning':''}),
+      kpiCard({label:'Leavers (Month)', value: fmtNum(leaversThisMonth.length), sub: monthStart.toLocaleString('en',{month:'short',year:'numeric'}), tone: leaversThisMonth.length>0?'warning':''}),
+      kpiCard({label:'Leavers (All Time)', value: fmtNum(totalLeavers), sub: totalLeavers ? `${reasonEntries.length} distinct reasons` : 'none recorded'}),
       kpiCard({label:'Avg Tenure at Exit', value: avgLeaverTenure.toFixed(1)+' yrs'}),
       kpiCard({label:'Top Exit Reason', value: topReason.length > 24 ? topReason.slice(0,23)+'…' : topReason, sub: reasonEntries[0] ? `${reasonEntries[0][1]} occurrence${reasonEntries[0][1]===1?'':'s'}` : ''}),
     ].join('');
@@ -2543,16 +2553,20 @@ function renderWorkforce(/* attendance rows — not used here */) {
     // Recent leavers table
     const tableBody = document.querySelector('#leaversTable tbody');
     if (totalLeavers === 0) {
-      tableBody.innerHTML = emptyRow(6);
+      tableBody.innerHTML = emptyRow(8);
     } else {
       const sorted = leavers.slice().sort((a,b) => b.leaverDate - a.leaverDate);
       tableBody.innerHTML = sorted.map(m => {
         const tenure = m.doj ? ((m.leaverDate - m.doj)/(1000*60*60*24*365)).toFixed(1)+'y' : '–';
+        const nMonths = noticeMonthsFor(m.designation);
+        const noticeEnd = new Date(m.leaverDate.getFullYear(), m.leaverDate.getMonth() + nMonths, m.leaverDate.getDate());
         return `<tr>
           <td><strong>${escapeHtml(m.fullName)}</strong> <span class="pill muted">${escapeHtml(m.empId)}</span></td>
           <td>${escapeHtml(m.dept || '–')}</td>
           <td>${escapeHtml(m.designation || '–')}</td>
           <td class="num">${fmtDate(m.leaverDate)}</td>
+          <td class="num">${nMonths} mo</td>
+          <td class="num">${fmtDate(noticeEnd)}</td>
           <td class="num">${tenure}</td>
           <td>${escapeHtml(m.leaverReason || '–')}</td>
         </tr>`;
@@ -2857,6 +2871,8 @@ const valueLabelPlugin = {
     ctx.fillStyle = '#475569';
     const type = chart.config.type;
     const horizontal = chart.options.indexAxis === 'y';
+    const stacked = type === 'bar' && !horizontal &&
+      chart.options.scales && chart.options.scales.y && chart.options.scales.y.stacked;
     chart.data.datasets.forEach((ds, di) => {
       const meta = chart.getDatasetMeta(di);
       if (meta.hidden) return;
@@ -2875,6 +2891,13 @@ const valueLabelPlugin = {
           ctx.fillStyle = '#fff';
           ctx.font = '600 11px ' + (Chart.defaults.font.family || 'sans-serif');
           ctx.fillText(label, pos.x, pos.y);
+          ctx.fillStyle = '#475569';
+        } else if (stacked) {
+          // Centered inside each segment; skip slivers too small to hold a number.
+          if (!v || Math.abs(el.base - el.y) < 12) return;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#fff';
+          ctx.fillText(label, el.x, (el.y + el.base) / 2);
           ctx.fillStyle = '#475569';
         } else if (horizontal) {
           ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -2917,10 +2940,12 @@ function drawBar(canvasId, labels, data, dsLabel, opts = {}) {
       callback: function(val) {
         const lbl = this.getLabelForValue(val);
         if (horizontal) return lbl;
-        // Quarter-aligned months only (Jan / Apr / Jul / Oct) so the axis reads as real quarters
+        // Quarter-aligned months only (Jan / Apr / Jul / Oct), but the LAST month — the report
+        // month — is always labelled so the end of the series is readable.
         if (opts.quarterTicks) {
+          const isLast = val === this.chart.data.labels.length - 1;
           const mm = /^\d{4}-(\d{2})$/.exec(lbl);
-          if (mm && mm[1] !== '01' && mm[1] !== '04' && mm[1] !== '07' && mm[1] !== '10') return '';
+          if (!isLast && mm && mm[1] !== '01' && mm[1] !== '04' && mm[1] !== '07' && mm[1] !== '10') return '';
         }
         // Truncate long labels for vertical bars
         return lbl && lbl.length > 28 ? lbl.slice(0,27)+'…' : lbl;
@@ -2960,7 +2985,7 @@ function drawBar(canvasId, labels, data, dsLabel, opts = {}) {
       maintainAspectRatio: false,
       indexAxis: horizontal ? 'y' : 'x',
       scales,
-      layout: opts.valueLabels && !horizontal ? { padding: { top: 14 } } : undefined,
+      layout: opts.valueLabels ? { padding: horizontal ? { right: 24 } : { top: 14 } } : undefined,
       plugins: {
         legend: { display: false },
         valueLabels: { display: !!opts.valueLabels, suffix: opts.suffix || '' },
@@ -3013,10 +3038,12 @@ function drawLine(canvasId, labels, datasets, opts = {}) {
             maxTicksLimit: opts.quarterTicks ? undefined : 14,
             callback: function(val) {
               const lbl = this.getLabelForValue(val);
-              // Quarter-aligned months only (Jan / Apr / Jul / Oct)
+              // Quarter-aligned months only (Jan / Apr / Jul / Oct); the last (report) month is
+              // always labelled so the end of the series is readable.
               if (opts.quarterTicks) {
+                const isLast = val === this.chart.data.labels.length - 1;
                 const mm = /^\d{4}-(\d{2})$/.exec(lbl);
-                if (mm && mm[1] !== '01' && mm[1] !== '04' && mm[1] !== '07' && mm[1] !== '10') return '';
+                if (!isLast && mm && mm[1] !== '01' && mm[1] !== '04' && mm[1] !== '07' && mm[1] !== '10') return '';
               }
               return lbl;
             }
@@ -3064,7 +3091,7 @@ function drawPie(canvasId, labels, data, opts = {}) {
   });
 }
 
-function drawStackedBar(canvasId, labels, datasets) {
+function drawStackedBar(canvasId, labels, datasets, opts = {}) {
   destroyIfExists(canvasId);
   const ctx = document.getElementById(canvasId).getContext('2d');
   State.charts[canvasId] = new Chart(ctx, {
@@ -3104,6 +3131,7 @@ function drawStackedBar(canvasId, labels, datasets) {
       },
       plugins: {
         legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 10, font: { size: 12 }, color: '#475569', usePointStyle: true, pointStyle: 'circle' } },
+        valueLabels: { display: !!opts.valueLabels, suffix: opts.suffix || '' },
         tooltip: baseTooltipOpts,
       }
     }
