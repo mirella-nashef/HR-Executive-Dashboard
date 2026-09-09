@@ -574,6 +574,9 @@
     #probationSection, #probationSection .card.flush { break-inside: avoid !important; page-break-inside: avoid !important; }
     /* Life stage prints as one unit — Average Age KPI, age chart and birthdays table together */
     #lifeStageSection, #lifeStageSection .card.flush { break-inside: avoid !important; page-break-inside: avoid !important; }
+    /* Outsourced employees start on their own page and print as one unit */
+    #outsourcedSection { break-before: page; page-break-before: always; }
+    #outsourcedSection, #outsourcedSection .card.flush { break-inside: avoid !important; page-break-inside: avoid !important; }
     /* Leavers & Turnover is its own story: start it on a fresh page and keep KPIs + charts together */
     #wfLeaversSection { break-before: page; page-break-before: always; break-inside: avoid; page-break-inside: avoid; }
     .tab-content { display: none !important; }
@@ -765,6 +768,22 @@
               <div class="card">
                 <div class="card-header"><div><div class="card-title">Female representation by quarter</div><div class="card-subtitle">% female of active workforce at each quarter end</div></div></div>
                 <div class="chart-wrap"><canvas id="chartFemaleQuarter"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block" id="outsourcedSection" style="display:none;">
+            <h3 class="section-heading">Outsourced employees</h3>
+            <div class="card flush">
+              <div class="card-head-block">
+                <div class="card-title" id="outsourcedTitle">Outsourced employees</div>
+                <div class="card-subtitle" id="outsourcedSubtitle">Contract staff from the master report — kept completely separate from headcount and every other workforce number.</div>
+              </div>
+              <div class="table-wrap scroll" style="border:none; border-radius:0 0 10px 10px; max-height:360px;">
+                <table class="data" id="outsourcedTable">
+                  <thead><tr><th>Employee</th><th>Department</th><th>Designation</th><th>Manager</th><th class="num">Joined</th><th class="num">Contract Ends</th><th class="num">Days Left</th><th class="num">Status</th></tr></thead>
+                  <tbody></tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -1139,6 +1158,7 @@ const State = {
   leaves: [],                 // optional: from a Leaves sheet (granular leave records)
   offsite: [],                // optional: from an Offsite Duty sheet
   shortLeaves: [],            // optional: from a Short Leave sheet
+  outsourced: [],             // contract staff from the mini-table below the master list
   masterMeta: null,           // { snapshotDate, fileName } detected from master file name
   filters: { dept: 'all', employee: 'all', from: null, to: null },
   charts: {},
@@ -1160,6 +1180,12 @@ function parseDate(s) {
   if (m) { const d = new Date(+m[3], +m[2]-1, +m[1]); return isNaN(d)?null:d; }
   const m2 = str.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
   if (m2) { const d = new Date(+m2[3], +m2[2]-1, +m2[1]); return isNaN(d)?null:d; }
+  // DD-MMM-YY(YY): "01-Sep-26", "9 Jun 2026" — two-digit years pivot at 50 via normalizeYear
+  const m3 = str.match(/^(\d{1,2})[\s\-\.\/]+([a-zA-Z]{3,9})[\s\-\.\/]+(\d{2,4})$/);
+  if (m3 && MONTH_NAMES[m3[2].toLowerCase()] !== undefined) {
+    const d = new Date(normalizeYear(m3[3]), MONTH_NAMES[m3[2].toLowerCase()], +m3[1]);
+    return isNaN(d) ? null : d;
+  }
   const d = new Date(str);
   return isNaN(d) ? null : d;
 }
@@ -1617,6 +1643,7 @@ function dedupKey(kind, r) {
     case 'leaves':     return `${r.empId}|${t(r.leaveFrom)}|${t(r.leaveTo)}|${(r.leaveType||'').toLowerCase()}`;
     case 'offsite':    return `${r.empId}|${t(r.fromDate)}|${t(r.toDate)}|${(r.reason||'').toLowerCase()}`;
     case 'shortleave': return `${r.empId}|${t(r.date)}|${r.duration||0}`;
+    case 'outsourced': return `${(r.fullName||'').toLowerCase()}|${t(r.doj)}|${t(r.contractEnd)}`;
     default:           return JSON.stringify(r);
   }
 }
@@ -1640,7 +1667,54 @@ function ingestParsedRows(rows, fields, fileName, opts) {
     if (skipped) console.info(`[hr-dashboard] "${fileName}": ${added} new attendance rows, ${skipped} duplicates skipped`);
     State.loadedFiles.push({ name: fileName, kind: 'attendance', count: added, skipped });
   } else if (kind === 'master') {
-    const norm = rows.map(normalizeMasterRow).filter(r => r.empId);
+    // The monthly master sheet can carry a SECOND mini-table below the employee rows:
+    //   Outsourced Employees Full Name | Date Of Joining | Contract End Date | Designation | ...
+    // Those rows would otherwise be swallowed as garbage employee rows (their name lands in the
+    // Employee Id column). Split on the marker row: everything above is the real master list,
+    // everything below is outsourced contract staff — stored separately and NEVER counted in
+    // headcount or any other workforce number.
+    const cellHasMarker = (r) => Object.values(r).some(v => /outsourced\s*employees/i.test(String(v || '')));
+    const markerIdx = rows.findIndex(cellHasMarker);
+    let mainRows = rows, outsourcedNorm = [];
+    if (markerIdx !== -1) {
+      mainRows = rows.slice(0, markerIdx);
+      // The marker row doubles as the sub-table header. If it only says "Outsourced Employees"
+      // (headers on the next row), use the following row as the header instead.
+      let headerVals = Object.values(rows[markerIdx]).map(v => String(v || '').trim());
+      let startIdx = markerIdx + 1;
+      if (!headerVals.some(v => /joining|contract/i.test(v)) && rows[startIdx]) {
+        headerVals = Object.values(rows[startIdx]).map(v => String(v || '').trim());
+        startIdx++;
+      }
+      const colOf = (re) => headerVals.findIndex(v => re.test(v));
+      const cols = {
+        name:        colOf(/full\s*name/i),
+        doj:         colOf(/joining/i),
+        contractEnd: colOf(/contract\s*end|end\s*date/i),
+        designation: colOf(/designation|job\s*title/i),
+        dept:        colOf(/department|function/i),
+        division:    colOf(/division/i),
+        manager:     colOf(/manager/i),
+      };
+      const pickCell = (vals, i) => (i >= 0 && i < vals.length && vals[i] != null) ? String(vals[i]).trim() : '';
+      outsourcedNorm = rows.slice(startIdx).map(r => {
+        const vals = Object.values(r);
+        return {
+          fullName:    pickCell(vals, cols.name),
+          doj:         cols.doj >= 0 ? parseDate(vals[cols.doj]) : null,
+          contractEnd: cols.contractEnd >= 0 ? parseDate(vals[cols.contractEnd]) : null,
+          designation: pickCell(vals, cols.designation),
+          dept:        pickCell(vals, cols.dept),
+          division:    pickCell(vals, cols.division),
+          manager:     pickCell(vals, cols.manager),
+        };
+      }).filter(o => o.fullName && o.doj); // partial rows (wrapped lines, blanks) are noise
+    }
+    if (outsourcedNorm.length) {
+      const { added: oAdded, skipped: oSkipped } = mergeUnique(State.outsourced, outsourcedNorm, 'outsourced');
+      console.info(`[hr-dashboard] "${fileName}": ${oAdded} outsourced employees${oSkipped ? `, ${oSkipped} duplicates skipped` : ''}`);
+    }
+    const norm = mainRows.map(normalizeMasterRow).filter(r => r.empId);
     const { added, skipped } = mergeUnique(State.master, norm, 'master');
     if (skipped) console.info(`[hr-dashboard] "${fileName}": ${added} new master rows, ${skipped} duplicates skipped`);
     const snapshotDate = detectSnapshotDate(fileName);
@@ -1854,6 +1928,7 @@ function renderLoadedFiles() {
     } else if (removed.kind === 'master') {
       State.master = [];
       State.masterMeta = null;
+      State.outsourced = [];
       State.loadedFiles = State.loadedFiles.filter(f => f.kind !== 'master');
     } else if (removed.kind === 'leaves') {
       State.leaves = [];
@@ -1880,7 +1955,7 @@ function renderLoadedFiles() {
   }));
 }
 function clearAll() {
-  State.rawAttendance = []; State.master = []; State.leaves = []; State.offsite = []; State.shortLeaves = [];
+  State.rawAttendance = []; State.master = []; State.leaves = []; State.offsite = []; State.shortLeaves = []; State.outsourced = [];
   State.loadedFiles = []; State.masterMeta = null;
   State.filters = { dept: 'all', employee: 'all', from: null, to: null };
   Object.values(State.charts).forEach(c => c.destroy()); State.charts = {};
@@ -2199,6 +2274,55 @@ function renderWorkforce(/* attendance rows — not used here */) {
     { label: 'Male',   data: genderByDept.map(g => g.male),   color: COLORS.primary },
     { label: 'Female', data: genderByDept.map(g => g.female), color: COLORS.pink },
   ], { valueLabels: true });
+
+  /* ---------- Outsourced employees ---------- */
+  // Contract staff from the mini-table below the master list — completely outside every
+  // workforce number above. Report-month rule, all measured against the period end:
+  //   - joined by the period end AND contract still running at the START of the report month;
+  //   - a contract that ended during the report month shows once more with an Ended status,
+  //     then disappears from the next month's report entirely.
+  const outsSection = document.getElementById('outsourcedSection');
+  if (outsSection) outsSection.style.display = State.outsourced.length ? '' : 'none';
+  if (State.outsourced.length) {
+    let outs = State.outsourced.filter(o => o.doj && o.doj <= periodEnd && (!o.contractEnd || o.contractEnd >= monthStart));
+    if (State.filters.dept !== 'all') outs = outs.filter(o => o.dept === State.filters.dept);
+    const outRows = outs.map(o => ({
+      o,
+      daysLeft: o.contractEnd ? Math.ceil((o.contractEnd - probRef) / 86400000) : null,
+    })).sort((a, b) => (a.daysLeft === null ? Infinity : a.daysLeft) - (b.daysLeft === null ? Infinity : b.daysLeft));
+    const activeCount = outRows.filter(r => r.daysLeft === null || r.daysLeft >= 0).length;
+    const endedCount = outRows.length - activeCount;
+
+    const outsTitle = document.getElementById('outsourcedTitle');
+    if (outsTitle) outsTitle.textContent = `Outsourced employees as at ${periodLabel}`;
+    const outsSub = document.getElementById('outsourcedSubtitle');
+    if (outsSub) outsSub.textContent = `${activeCount} active · ${endedCount} ended during the report month. Contract staff are kept completely separate — they are not counted in headcount or any other workforce number. A contract that ended during the report month is shown once with an Ended status, then drops off the next month's report.`;
+
+    const outsTbody = document.querySelector('#outsourcedTable tbody');
+    if (outsTbody) {
+      outsTbody.innerHTML = outRows.length ? outRows.map(({ o, daysLeft }) => {
+        const ended = daysLeft !== null && daysLeft < 0;
+        let daysCell = '–';
+        if (daysLeft !== null && !ended) {
+          const pill = daysLeft <= 14 ? 'danger' : daysLeft <= 30 ? 'warning' : 'muted';
+          daysCell = `<span class="pill ${pill}">${daysLeft === 0 ? 'last day' : daysLeft + ' day' + (daysLeft === 1 ? '' : 's')}</span>`;
+        }
+        const statusCell = ended
+          ? `<span class="pill danger">Ended</span>`
+          : `<span class="pill success">Active</span>`;
+        return `<tr>
+          <td><strong>${escapeHtml(o.fullName)}</strong></td>
+          <td>${escapeHtml(o.dept || '–')}</td>
+          <td>${escapeHtml(o.designation || '–')}</td>
+          <td>${escapeHtml(o.manager || '–')}</td>
+          <td class="num">${fmtDate(o.doj)}</td>
+          <td class="num">${o.contractEnd ? fmtDate(o.contractEnd) : '–'}</td>
+          <td class="num">${daysCell}</td>
+          <td class="num">${statusCell}</td>
+        </tr>`;
+      }).join('') : emptyRow(8);
+    }
+  }
 
   /* ---------- Life stage: age groups, avg age, birthdays ---------- */
   const ages = mEmps.filter(m => m.dob).map(m => (todayRef - m.dob)/(1000*60*60*24*365.25));
