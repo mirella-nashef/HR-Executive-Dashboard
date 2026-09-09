@@ -572,6 +572,8 @@
     canvas { width: 100% !important; height: auto !important; max-width: 100% !important; }
     /* Probation prints as one unit — heading, card and table together on the same page */
     #probationSection, #probationSection .card.flush { break-inside: avoid !important; page-break-inside: avoid !important; }
+    /* Life stage prints as one unit — Average Age KPI, age chart and birthdays table together */
+    #lifeStageSection, #lifeStageSection .card.flush { break-inside: avoid !important; page-break-inside: avoid !important; }
     /* Leavers & Turnover is its own story: start it on a fresh page and keep KPIs + charts together */
     #wfLeaversSection { break-before: page; page-break-before: always; break-inside: avoid; page-break-inside: avoid; }
     .tab-content { display: none !important; }
@@ -767,7 +769,7 @@
             </div>
           </div>
 
-          <div class="section-block">
+          <div class="section-block" id="lifeStageSection">
             <h3 class="section-heading">Life stage</h3>
             <div class="kpi-grid" id="lifeStageKpis" style="margin-bottom: 14px;"></div>
             <div class="chart-grid cols-2">
